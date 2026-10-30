@@ -102,12 +102,39 @@ export function classifySender(msg, cfg) {
   return { kind: 'unknown', score: aiScore - humanScore, reasons: [...reasons, 'unresolved'] }
 }
 
+/**
+ * 清洗语料文本：去掉 @ 标记、表情标签、控制字符。
+ *
+ * 不做清洗的话，``<@FACE6559…>`` 的尾巴会统计成高频「句尾」，
+ * 学出来的风格全是噪声。
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+export function cleanText(text) {
+  return String(text ?? '')
+    // <@OPENID> 和 @昵称
+    .replace(/<@!?[0-9A-Fa-f]{20,}>/gu, '')
+    .replace(/@[\w\u4e00-\u9fa5·]+(?=\s|$)/gu, '')
+    // <faceType=..,faceId="..",ext=".."> 这类表情标签
+    .replace(/<faceType=[^>]*>/gu, '')
+    // 残留的尖括号片段
+    .replace(/<[^<>]{0,40}>/gu, '')
+    // 控制字符
+    .replace(/[\u0000-\u001f\u007f]/gu, '')
+    // 多余空白
+    .replace(/\s+/gu, ' ')
+    .trim()
+}
+
 /** 从真人语料里提取说话风格特征。 */
 export function analyzeStyle(messages) {
   const human = messages.filter((m) => m.kind === 'human')
   if (human.length === 0) return null
 
-  const texts = human.map((m) => String(m.text ?? '')).filter((t) => t.length > 0)
+  const texts = human
+    .map((m) => cleanText(m.text))
+    .filter((t) => t.length >= 2)          // 清洗后太短的（纯 @、纯表情）不要
   if (texts.length === 0) return null
 
   const lens = texts.map((t) => t.length).sort((a, b) => a - b)
@@ -116,14 +143,20 @@ export function analyzeStyle(messages) {
   const count = (re) => texts.filter((t) => re.test(t)).length
   const total = texts.length
 
-  // 常用语气词（结尾）
+  // 常用语气词（结尾）：只取纯中文的两字尾，排除符号和字母
   const tailWords = new Map()
   for (const t of texts) {
     const tail = t.slice(-2)
-    if (tail.length === 2) tailWords.set(tail, (tailWords.get(tail) ?? 0) + 1)
+    if (!/^[\u4e00-\u9fa5]{2}$/u.test(tail)) continue
+    tailWords.set(tail, (tailWords.get(tail) ?? 0) + 1)
   }
+  // 只排掉话题名词，保留真正的语气词。
+  // 「肥鱼」「表情包」这类是群里聊的话题，学来没意义；「了吗」「一下」这种才是语气。
+  const TOPIC_TAILS = new Set([
+    '肥鱼', '表情', '情包', '消息', '聊天', '东西', '问题',
+  ])
   const topTails = [...tailWords.entries()]
-    .filter(([, n]) => n >= Math.max(2, total * 0.02))
+    .filter(([w, n]) => n >= 3 && !TOPIC_TAILS.has(w))
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8)
     .map(([w, n]) => ({ word: w, count: n }))
@@ -249,35 +282,54 @@ export function apply(ctx, config = {}) {
   }
 
   // ---- 挂到 dsh-im 的消息流 ----
-  // dsh-im 每条收到的消息都会发这个事件（包括没 @ 我的）。
+  //
+  // 实测的真实结构是**两条消息**：
+  //   1. source.kind = 'plugin:dsh-im'，内容是 <dsh_im_source>{...}</dsh_im_source>
+  //   2. source.kind = 'user'，内容是这个人真正说的话
+  //
+  // 所以要跨两条配对：先记住元数据，等下一条 user 消息来了再落库。
+  let pendingMeta = null
+
   ctx.on('session/event', (session, event) => {
     if (!event || event.type !== 'user/message') return
     const msg = event.data ?? {}
     const source = msg.source
-    if (!source || source.kind !== 'plugin:dsh-im-notice' && source.kind !== 'user') return
+    if (!source) return
 
-    // 从 dsh_im_source 里取群消息元数据
     const text = Array.isArray(msg.content)
       ? msg.content.filter((b) => b?.type === 'text').map((b) => String(b.text ?? '')).join('\n')
       : ''
-    const m = text.match(/<dsh_im_source>([\s\S]*?)<\/dsh_im_source>/u)
-    if (!m) return
 
-    let meta
-    try { meta = JSON.parse(m[1]) } catch { return }
-    if (meta.conversationType !== 'group') return
+    // 第一段：IM 元数据
+    if (source.kind === 'plugin:dsh-im') {
+      const m = text.match(/<dsh_im_source>([\s\S]*?)<\/dsh_im_source>/u)
+      if (!m) return
+      try {
+        const meta = JSON.parse(m[1])
+        if (meta.conversationType === 'group') {
+          pendingMeta = { meta, at: Date.now() }
+        }
+      } catch { /* 解析失败忽略 */ }
+      return
+    }
 
-    // 去掉 meta 标签，剩下的才是真正的话
-    const body = text.replace(/<dsh_im_source>[\s\S]*?<\/dsh_im_source>/u, '').trim()
-    if (body === '') return
+    // 第二段：真正的话
+    if (source.kind === 'user' && pendingMeta) {
+      // 超过 10 秒的配对视为过期，避免错配
+      if (Date.now() - pendingMeta.at > 10_000) { pendingMeta = null; return }
+      const body = text.replace(/<dsh_im_source>[\s\S]*?<\/dsh_im_source>/u, '').trim()
+      const { meta } = pendingMeta
+      pendingMeta = null
+      if (body === '') return
 
-    ingest({
-      platformMessageId: msg.id,
-      senderId: meta.senderId,
-      senderName: meta.senderName,
-      text: body,
-      sentAt: Date.now(),
-    })
+      ingest({
+        platformMessageId: msg.id,
+        senderId: meta.senderId,
+        senderName: meta.senderName,
+        text: body,
+        sentAt: Date.now(),
+      })
+    }
   })
 
   // ---- 定时重算风格画像 ----

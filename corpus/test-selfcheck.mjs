@@ -3,7 +3,7 @@
  * 运行：node test-selfcheck.mjs
  */
 import assert from 'node:assert/strict'
-import { analyzeStyle, classifySender, renderStyleHint } from './lib/index.mjs'
+import { analyzeStyle, classifySender, cleanText, renderStyleHint } from './lib/index.mjs'
 
 const cfg = {
   aiIds: ['42FFF41FEA18578BC2EC06861D1930A0', '1C282365D18006B61447EB7ACB963F60'],
@@ -54,7 +54,7 @@ const cfg = {
   ]
   const style = analyzeStyle(msgs)
   assert.ok(style !== null, '有真人样本时应产出 style')
-  assert.equal(style.sampleSize, 5, '只统计 human')
+  assert.equal(style.sampleSize, 4, '统计 human（清洗后太短的会被剔除）')
   assert.ok(style.length.median > 0, '中位数应 > 0')
   assert.ok(style.markdown.usesBold === 0, '样本里真人没用加粗')
   console.log('OK analyzeStyle')
@@ -71,6 +71,29 @@ const cfg = {
   assert.ok(hint.includes('群聊说话风格参考'), '应包含标题')
   assert.ok(hint.includes('中位数'), '应包含长度统计')
   console.log('OK renderStyleHint')
+}
+
+// ---- cleanText：去 @ 与表情标签 ----
+{
+  assert.equal(cleanText('<@FACE655901D7509DE0F67BDAC852E6FC> 今天好累啊'), '今天好累啊')
+  assert.equal(cleanText('好的<faceType=1,faceId="14",ext="abc">'), '好的')
+  assert.equal(cleanText('@Miyu 你说呢'), '你说呢')
+  console.log('OK cleanText')
+}
+
+// ---- 句尾统计不该被 @ 标记污染 ----
+{
+  const msgs = [
+    { kind: 'human', text: '<@FACE655901D7509DE0F67BDAC852E6FC> 哈哈' },
+    { kind: 'human', text: '好的吧' },
+    { kind: 'human', text: '<@1C282365D18006B61447EB7ACB963F60>' },  // 纯 @，清洗后为空
+    { kind: 'human', text: '嗯嗯' },
+  ]
+  const style = analyzeStyle(msgs)
+  const tails = style.commonTails.map((t) => t.word)
+  assert.ok(!tails.some((w) => w.includes('>')), `句尾不该含尖括号，实际: ${tails}`)
+  assert.ok(!tails.some((w) => /^[0-9A-Fa-f]+$/u.test(w)), `句尾不该含 openid 片段，实际: ${tails}`)
+  console.log('OK 句尾无污染')
 }
 
 console.log('\n全部通过')
