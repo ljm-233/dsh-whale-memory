@@ -68,6 +68,15 @@ window.__ModuleLoader__.load({
       },
       {
         form: 'memory',
+        title: '日记',
+        hint: '到点自己记一笔，不管有没有人找。这是让它「一直在」的那根线。',
+        fields: [
+          { path: ['diary', 'enabled'], label: '自动写日记', kind: 'bool' },
+          { path: ['diary', 'hour'], label: '每天几点之后写（0–23）', kind: 'int', min: 0, max: 23 },
+        ],
+      },
+      {
+        form: 'memory',
         title: '压缩存档',
         hint: '上下文被压缩时，把摘要和那段原文汇成文档。',
         fields: [

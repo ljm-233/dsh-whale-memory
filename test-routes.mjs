@@ -64,6 +64,26 @@ db.prepare('INSERT INTO entries(u,a,t,w,emo,hot) VALUES(?,?,?,?,?,?)')
   .run('热区里的一句话', '嗯', now, 1, '[]', 1)
 db.close()
 
+/** 调一个端点并带上 JSON body。 */
+const post = (path, body) => new Promise((ok) => {
+  const handler = routes.get(path)
+  assert.ok(handler, `没有注册 ${path}`)
+  const req = {
+    method: 'POST',
+    url: path,
+    on(event, cb) {
+      if (event === 'data') cb(JSON.stringify(body ?? {}))
+      if (event === 'end') cb()
+    },
+  }
+  const res = {
+    status: 0,
+    writeHead(code) { this.status = code; return this },
+    end(payload) { ok({ status: this.status, body: payload === undefined ? undefined : JSON.parse(payload) }) },
+  }
+  handler(req, res)
+})
+
 // ---- status ----
 {
   const { status, body } = await call('/dsh-whale-memory/status')
@@ -114,4 +134,36 @@ db.close()
   console.log('OK entries 参数兜底')
 }
 
+// ---- 日记 ----
+{
+  const empty = await call('/dsh-whale-memory/diary')
+  assert.equal(empty.status, 200)
+  assert.equal(empty.body.total, 0, '一开始没有日记')
+
+  // 强制写一篇：测试环境里没有模型，走的是兜底文案
+  const written = await post('/dsh-whale-memory/diary', {})
+  assert.equal(written.status, 200)
+  assert.equal(written.body.written, true)
+  assert.match(written.body.day, /^\d{4}-\d{2}-\d{2}$/)
+  assert.ok(written.body.text.length > 0, '兜底也要写点东西，不能空')
+
+  const list = await call('/dsh-whale-memory/diary')
+  assert.equal(list.body.total, 1)
+  assert.equal(list.body.items[0].day, written.body.day)
+  assert.equal(list.body.items[0].text, written.body.text)
+
+  // 同一天再写一次：会覆盖，不会多出一条
+  const again = await post('/dsh-whale-memory/diary', { day: written.body.day })
+  assert.equal(again.body.written, true)
+  assert.equal((await call('/dsh-whale-memory/diary')).body.total, 1, '一天只有一篇')
+
+  // 状态里能看到日记条数
+  assert.equal((await call('/dsh-whale-memory/status')).body.diary, 1)
+
+  // 只接受 GET / POST
+  assert.equal((await call('/dsh-whale-memory/diary', 'DELETE')).status, 405)
+  console.log('OK 日记')
+}
+
 console.log('\n全部通过')
+

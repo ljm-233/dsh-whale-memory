@@ -80,6 +80,7 @@ const value = {
   recallMax: 3,
   recallThreshold: 2,
   weightMax: 12,
+  diary: { enabled: true, hour: 22 },
   archive: { enabled: true, notify: true, dir: '', botId: '', targetId: '' },
 }
 const user = { budgetChars: 1500, archive: { notify: false } }
@@ -140,7 +141,7 @@ assert.equal(registration.spec.label(), '鲸娘记忆')
 const html = renderToStaticMarkup(React.createElement(registration.component))
 
 for (const text of [
-  '记忆注入', '主动联想', '压缩存档',
+  '记忆注入', '主动联想', '日记', '自动写日记', '压缩存档',
   '注入字符上限', '想起门槛', '顺手私发主人一份',
   '主动消息 · 什么时候可以说话', '主动消息 · 免打扰', '每天最多发几条', '每多少分钟检查一次',
   '记忆内容', '热区', '冷区', '只读',
@@ -163,10 +164,10 @@ console.log('OK 客户端设置页')
 // ---- 写入路径 ----
 // 路径 → 写法的映射是纯函数，直接调，不用模拟点击。
 const { writePath, resetPath, normalizeNumber, GROUPS } = plugin.__test
-assert.equal(GROUPS.length, 5)
-assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 3, '记忆三组')
+assert.equal(GROUPS.length, 6)
+assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 4, '记忆四组')
 assert.equal(GROUPS.filter((g) => g.form === 'proactive').length, 2, '主动消息两组')
-assert.equal(GROUPS.flatMap((g) => g.fields).length, 14, '一共 14 个设置项')
+assert.equal(GROUPS.flatMap((g) => g.fields).length, 16, '一共 16 个设置项')
 
 writes.length = 0
 writePath(form, ['budgetChars'], 1500)
