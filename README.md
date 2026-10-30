@@ -132,6 +132,43 @@ WantedBy=timers.target
 systemctl --user enable --now dsh-whale-ruminate.timer
 ```
 
+
+## 自己梳理记忆
+
+除了「胡思乱想」（生成联想噪声），插件每 6 小时会自己梳理一次记忆。
+
+和 `ruminate.js` 的区别：
+
+| | ruminate | consolidate |
+|---|---|---|
+| 做什么 | 随机配对，生成联想 | 读一批记忆，判断怎么整理 |
+| 需要模型吗 | 不需要，纯向量 | **需要**，判断要靠语言理解 |
+| 结果 | 加噪声 | 合并重复、删空壳、提炼规律 |
+
+梳理时会：
+
+1. 取 20 条冷区记忆（排除联想条目和已有的规律）
+2. 交给模型判断：哪些该合并、哪些该删、能看出什么规律
+3. 按判断改库；新规律标 `（规律）` 前缀，权重 3
+
+**模型不可用时自动退回纯向量合并**（只合余弦 > 0.85 的，删掉内容少于 3 字的空壳）。
+
+手动触发：
+
+```bash
+# 只看模型建议，不动库
+curl -X POST http://127.0.0.1:3080/dsh-whale-memory/consolidate \
+  -H 'content-type: application/json' -d '{"dry":true}'
+
+# 真执行
+curl -X POST http://127.0.0.1:3080/dsh-whale-memory/consolidate \
+  -H 'content-type: application/json' -d '{}'
+```
+
+模型路由默认从 `WHALE_LLM_ROUTE` 环境变量读（格式 `provider/model`），没设则退回向量合并。
+
+---
+
 ## 配置
 
 | 常量 | 默认 | 含义 |
