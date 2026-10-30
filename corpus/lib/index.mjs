@@ -202,7 +202,7 @@ export function renderStyleHint(style, exemplars = []) {
   lines.push('', '要求：像群里的人那样说话。别端着，别用表格和列表，短句为主。')
 
   // 范例：这是「学说话」的关键——统计告诉你怎么说，范例告诉你什么味道
-  const ex = (exemplars ?? []).filter((e) => e && typeof e.text === 'string' && e.text.length > 0).slice(0, 10)
+  const ex = (exemplars ?? []).filter((e) => e && typeof e.text === 'string' && e.text.length > 0).slice(0, 4)
   if (ex.length > 0) {
     lines.push('', '群里真人说话的实例（学它们的语气，不要照抄内容）：')
     for (const e of ex) lines.push(`- ${e.text}`)
