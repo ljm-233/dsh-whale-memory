@@ -59,7 +59,21 @@ curl -s http://127.0.0.1:3080/dsh-whale-memory/status
 
 再打开 Web 设置，左侧应该多一页「鲸娘记忆」，能看到四组参数和只读的记忆内容预览。
 
-## 五、Windows 11 上装
+## 五、dsh 更新后插件不见了
+
+`dsh` 升级或 pnpm 重装 profile 时，手工复制进 `node_modules` 的包会被清掉——表现是三个 `*/status` 端点全部 404。
+
+一条命令恢复（会重新拷包并把 bundles 名单补全）：
+
+```bash
+node scripts/install-local.mjs
+# 或指定 profile
+node scripts/install-local.mjs --profile ~/.dsh/profiles/web
+```
+
+恢复完重启 dsh。
+
+## 六、Windows 11 上装
 
 代码本身没有只跑在 Linux 的地方（没有 `/tmp`、没有 `HOME` 环境变量、没有 shell 调用），但**服务怎么起**要换成 Windows 的写法。
 
@@ -153,13 +167,13 @@ schtasks /create /tn "dsh-whale-ruminate" /tr "node %USERPROFILE%\dsh-whale-memo
 - 没有做「Windows 服务」形态，只有任务计划程序——关掉终端服务就停
 - 路径里有中文或空格时，`dsh plugin add` 可能需要给路径加引号
 
-## 六、装完会怎样
+## 七、装完会怎样
 
 它开始有自己的记忆：热区放最近几轮，冷区放长期，被压缩掉的对话会抢救回来，每天自己写一篇日记，跨窗口写同一条事件线。
 
 **记忆是它自己的**，存在它那台机器的 `~/.dsh/whale-memory/` 里，不跟别人的混。
 
-## 七、已知差异
+## 八、已知差异
 
 - 没有向量服务 → 召回降级，但不会崩
 - 没有 `@deepseek-ai/dsh-tools` → 工具不注册（记忆照常工作，只是模型不能自己查/改）
