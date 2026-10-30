@@ -175,8 +175,17 @@ if (tools.size === 0) {
 } else {
   const recall = tools.get('memory_recall')
   const fix = tools.get('memory_correct')
+  const policy = tools.get('memory_policy')
   assert.ok(recall, '要注册 memory_recall')
   assert.ok(fix, '要注册 memory_correct')
+  assert.ok(policy, '要注册 memory_policy')
+
+  // 取舍倾向：读、写、再读
+  assert.equal((await policy.execute({}, {})).policy, '')
+  const set = await policy.execute({ text: '做过的决定值得留' }, {})
+  assert.equal(set.changed, true)
+  assert.equal((await policy.execute({}, {})).policy, '做过的决定值得留')
+  assert.equal((await call('/dsh-whale-memory/status')).body.policy, '做过的决定值得留')
 
   const found = await recall.execute({ keyword: '冷区' }, {})
   assert.ok(found.count >= 1, '应该查得到刚才放进去的条目')

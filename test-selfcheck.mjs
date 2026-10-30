@@ -3,7 +3,7 @@
  * 运行：node test-selfcheck.mjs
  */
 import assert from 'node:assert/strict'
-import { buildArchiveDoc, correctEntry, recentEvents, cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, retractEntry, scoreMemory, searchEntries, similarity, splitForIm } from './lib/index.mjs'
+import { buildArchiveDoc, correctEntry, parseJudgement, readPolicy, recentEvents, writePolicy, cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, retractEntry, scoreMemory, searchEntries, similarity, splitForIm } from './lib/index.mjs'
 import { DatabaseSync } from 'node:sqlite'
 
 // ---- detectEmotions ----
@@ -252,6 +252,37 @@ import { DatabaseSync } from 'node:sqlite'
   assert.ok(fromS1.every((e) => e.session === 's1'))
   assert.equal(recentEvents(db, {}).length, 4, '不给 hours 就是全都要')
   console.log('OK 共享时间线')
+}
+
+// ---- 记忆取舍倾向 ----
+{
+  const db = new DatabaseSync(':memory:')
+  db.exec('CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)')
+
+  assert.equal(readPolicy(db), '', '一开始没有倾向')
+  const saved = writePolicy(db, '  做过的决定和我犯过的错值得留   寒暄不必  ')
+  assert.equal(saved, '做过的决定和我犯过的错值得留 寒暄不必', '空白会收敛')
+  assert.equal(readPolicy(db), saved)
+
+  writePolicy(db, '改成：只留改坏过的东西')
+  assert.equal(readPolicy(db), '改成：只留改坏过的东西', '再写一次是覆盖')
+  assert.ok(writePolicy(db, 'x'.repeat(2000)).length === 600, '超长截断')
+  console.log('OK 取舍倾向')
+}
+
+// ---- parseJudgement：压缩时留不留 ----
+{
+  assert.deepEqual(parseJudgement('{"keep": true, "line": "改完设置页的数值输入"}'),
+    { keep: true, line: '改完设置页的数值输入' })
+  assert.deepEqual(parseJudgement('{"keep": false, "line": ""}'), { keep: false, line: '' })
+  // 带解释的包裹也要能解析
+  assert.deepEqual(parseJudgement('判断如下：\n{"keep": true, "line": "推了一次代码"}\n以上'),
+    { keep: true, line: '推了一次代码' })
+  // 解析不了就宁可留下
+  assert.deepEqual(parseJudgement('这段挺重要的吧'), { keep: true, line: '这段挺重要的吧' })
+  assert.deepEqual(parseJudgement(''), { keep: true, line: '' })
+  assert.deepEqual(parseJudgement(null), { keep: true, line: '' })
+  console.log('OK parseJudgement')
 }
 
 console.log('\n全部通过')
