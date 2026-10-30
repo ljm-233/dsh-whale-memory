@@ -4,6 +4,7 @@
  */
 import assert from 'node:assert/strict'
 import { analyzeStyle, classifySender, cleanText, renderStyleHint } from './lib/index.mjs'
+import { judgeExemplar } from './exemplars.js'
 
 const cfg = {
   aiIds: ['42FFF41FEA18578BC2EC06861D1930A0', '1C282365D18006B61447EB7ACB963F60'],
@@ -94,6 +95,41 @@ const cfg = {
   assert.ok(!tails.some((w) => w.includes('>')), `句尾不该含尖括号，实际: ${tails}`)
   assert.ok(!tails.some((w) => /^[0-9A-Fa-f]+$/u.test(w)), `句尾不该含 openid 片段，实际: ${tails}`)
   console.log('OK 句尾无污染')
+}
+
+// ---- judgeExemplar：范例筛选 ----
+{
+  // 真人表达：留下
+  assert.ok(judgeExemplar('我…终于…下…课了').ok, '感叹应通过')
+  assert.ok(judgeExemplar('同时三个对话还是太烧心了').ok, '吐槽应通过')
+  assert.ok(judgeExemplar('提弗洛斯太肥美了').ok, '感慨应通过')
+
+  // 指令句：排除
+  assert.ok(!judgeExemplar('肥鱼，打开崩坏星穹铁道').ok, '点名+命令应排除')
+  assert.ok(!judgeExemplar('你可以添加一个戳戳吗').ok, '功能需求应排除')
+  assert.ok(!judgeExemplar('帮我查一下今天天气').ok, '祈使应排除')
+
+  // 其他噪声：排除
+  assert.ok(!judgeExemplar('哈哈哈哈哈哈').ok, '纯重复应排除')
+  assert.ok(!judgeExemplar('短').ok, '太短应排除')
+  assert.ok(!judgeExemplar('const x = 1;').ok, '非中文应排除')
+  console.log('OK judgeExemplar')
+}
+
+// ---- 范例注入到提示词 ----
+{
+  const style = analyzeStyle([
+    { kind: 'human', text: '我今天好累啊' },
+    { kind: 'human', text: '睡觉了' },
+    { kind: 'human', text: '哈哈' },
+  ])
+  const hint = renderStyleHint(style, [{ name: 'x', text: '我…终于…下…课了' }])
+  assert.ok(hint.includes('群里真人说话的实例'), '应包含范例段')
+  assert.ok(hint.includes('我…终于…下…课了'), '应包含范例原文')
+
+  const noEx = renderStyleHint(style, [])
+  assert.ok(!noEx.includes('群里真人说话的实例'), '没范例时不该有这一段')
+  console.log('OK 范例注入')
 }
 
 console.log('\n全部通过')

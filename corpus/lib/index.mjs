@@ -184,7 +184,7 @@ export function analyzeStyle(messages) {
 }
 
 /** 把 style profile 渲染成可注入的提示词片段。 */
-export function renderStyleHint(style) {
+export function renderStyleHint(style, exemplars = []) {
   if (!style) return ''
   const { length, punctuation, markdown, commonTails } = style
   const lines = [
@@ -200,6 +200,14 @@ export function renderStyleHint(style) {
     lines.push(`- 常见句尾：${tails}`)
   }
   lines.push('', '要求：像群里的人那样说话。别端着，别用表格和列表，短句为主。')
+
+  // 范例：这是「学说话」的关键——统计告诉你怎么说，范例告诉你什么味道
+  const ex = (exemplars ?? []).filter((e) => e && typeof e.text === 'string' && e.text.length > 0).slice(0, 10)
+  if (ex.length > 0) {
+    lines.push('', '群里真人说话的实例（学它们的语气，不要照抄内容）：')
+    for (const e of ex) lines.push(`- ${e.text}`)
+  }
+
   return lines.join('\n')
 }
 
@@ -357,7 +365,14 @@ export function apply(ctx, config = {}) {
     // 样本太少不注入，免得学歪
     if (!style || style.sampleSize < 30) return decision
 
-    const hint = renderStyleHint(style)
+    // 读范例（可能不存在，不存在就只用统计）
+    let exemplars = []
+    try {
+      const ep = join(dir, 'exemplars.json')
+      if (existsSync(ep)) exemplars = JSON.parse(readFileSync(ep, 'utf8')).exemplars ?? []
+    } catch { /* 忽略 */ }
+
+    const hint = renderStyleHint(style, exemplars)
     if (hint === '') return decision
 
     return {
