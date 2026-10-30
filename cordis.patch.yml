@@ -1,0 +1,8 @@
+# dsh-whale-memory bundle patch
+#
+# 冷热分层记忆：最近几轮留热区，旧事降温进冷区，只在被线索唤回时取用。
+# 零依赖，不需要任何原生编译。
+
+- insert:
+    - id: dsh-whale-memory
+      name: dsh-whale-memory

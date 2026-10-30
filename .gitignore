@@ -1,0 +1,9 @@
+node_modules/
+*.log
+*.db
+*.db-shm
+*.db-wal
+testdata/
+.dsh-project-memory/
+__pycache__/
+*.pyc
