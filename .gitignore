@@ -7,3 +7,4 @@ testdata/
 .dsh-project-memory/
 __pycache__/
 *.pyc
+archives/

@@ -236,6 +236,22 @@ session.eventAt(seq) 从日志取回原文（压缩只是从上下文移走，�
 
 这些归档记忆和普通记忆走同一套召回：情绪吻合、向量相似、线索命中，被想起时权重累加。所以真正重要的事会越压越深。
 
+### 顺便存一份完整存档
+
+光有「一句话」不够——有时候你想回头看看原文到底说了什么。所以压缩发生时，还会额外写一份完整的 Markdown：
+
+```
+~/.dsh/whale-memory/archives/20261030-173322-<会话>.md
+```
+
+内容是压缩摘要 + 那段被压掉的完整对话（不截断）。同时**复制一份私发给主人**：
+
+- 优先用配置里的 `archive.botId` / `archive.targetId`；
+- 没配就自动找机器人下的第一个单聊目标，不用把 openid 写进公开配置；
+- 私发按 1200 字分段，最多 6 段；超出的部分不硬塞，末尾注明本地文件路径。
+
+落盘是主路径，私发只是附带——发不出去也不影响存档。
+
 ---
 
 ## 配置
@@ -249,6 +265,22 @@ session.eventAt(seq) 从日志取回原文（压缩只是从上下文移走，�
 | `COLD_MAX` | 2000 | 冷区硬上限 |
 | `IMPORTANT_WEIGHT` | 8 | 权重达到此值不再参与合并 |
 | `RECALL_THRESHOLD` | 2.0 | 联想的分数门槛 |
+| `WEIGHT_MAX` | 12 | 单条记忆权重上限（防止被反复想起的条目垄断回忆位） |
+| `IM_PART_CHARS` | 1200 | 压缩存档私发时单条消息字数 |
+| `IM_MAX_PARTS` | 6 | 压缩存档私发最多几条 |
+
+压缩存档可以关掉：
+
+```yaml
+- id: dsh-whale-memory
+  config:
+    archive:
+      enabled: false          # 连存档都不写
+      notify: false           # 只落盘，不私发
+      dir: archives           # 相对记忆目录
+      botId: qq_xxxxxxxx      # 不填就自动找
+      targetId: tgt_xxxxxxxx  # 不填就自动找单聊目标
+```
 
 环境变量：
 
@@ -263,7 +295,7 @@ session.eventAt(seq) 从日志取回原文（压缩只是从上下文移走，�
 ## 自检
 
 ```bash
-node test-selfcheck.mjs        # 七个纯函数用例，不需要向量服务
+node test-selfcheck.mjs        # 十个纯函数用例，不需要向量服务
 curl http://127.0.0.1:3080/dsh-whale-memory/status
 ```
 

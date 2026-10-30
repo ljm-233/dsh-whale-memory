@@ -3,7 +3,7 @@
  * 运行：node test-selfcheck.mjs
  */
 import assert from 'node:assert/strict'
-import { cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, scoreMemory, similarity } from './lib/index.mjs'
+import { buildArchiveDoc, cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, scoreMemory, similarity, splitForIm } from './lib/index.mjs'
 
 // ---- detectEmotions ----
 {
@@ -126,6 +126,43 @@ import { cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, 
   assert.deepEqual(pairShadowed(() => undefined, []), [])
   assert.deepEqual(pairShadowed(() => undefined, [99]), [], '取不到事件应返回空')
   console.log('OK pairShadowed')
+}
+
+// ---- buildArchiveDoc：压缩存档 ----
+{
+  const doc = buildArchiveDoc({
+    at: new Date('2026-10-30T09:00:00Z'),
+    sessionId: 'session-abc12345',
+    summary: '用户测试了压缩存档。',
+    tokens: 1234,
+    pairs: [{ u: '先存档', a: '好' }, { u: '再私发', a: '' }],
+  })
+  assert.match(doc, /^# 上下文压缩存档/)
+  assert.match(doc, /压缩掉：2 轮，约 1,234 token/)
+  assert.match(doc, /## 压缩摘要\n\n用户测试了压缩存档。/)
+  assert.match(doc, /### 1\n\n\*\*用户\*\*：先存档\n\n\*\*我\*\*：好/)
+  assert.match(doc, /\*\*用户\*\*：再私发\n/, '没有回复时也不该崩')
+
+  const empty = buildArchiveDoc({
+    at: new Date('2026-10-30T09:00:00Z'), sessionId: 's', summary: '', tokens: 0, pairs: [],
+  })
+  assert.match(empty, /（压缩器没有给出摘要）/)
+  console.log('OK buildArchiveDoc')
+}
+
+// ---- splitForIm：分段发送 ----
+{
+  const short = splitForIm('abc', '/tmp/x.md')
+  assert.deepEqual(short, ['abc'], '短文不该被切')
+
+  const long = splitForIm('甲'.repeat(1200 * 20), '/tmp/x.md')
+  assert.equal(long.length, 6, '最多 6 段')
+  assert.match(long[5], /后面还有 \d+ 字，没发完。完整版在：\/tmp\/x\.md）$/)
+
+  const exact = splitForIm('乙'.repeat(1200 * 3), '/tmp/y.md')
+  assert.equal(exact.length, 3)
+  assert.doesNotMatch(exact[2], /没发完/, '正好整除时不该提示截断')
+  console.log('OK splitForIm')
 }
 
 console.log('\n全部通过')
