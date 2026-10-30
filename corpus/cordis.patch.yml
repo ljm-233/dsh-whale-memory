@@ -1,0 +1,8 @@
+# dsh-group-corpus bundle patch
+#
+# 采集群聊全部消息、区分真人与 AI、学习真人说话风格。
+# 语料落在 ~/.dsh/group-corpus/（messages.jsonl + corpus.db）。
+
+- insert:
+    - id: dsh-group-corpus
+      name: dsh-group-corpus
