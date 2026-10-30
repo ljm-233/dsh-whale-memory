@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
-import { composeMessage, dayKey, decide, isQuietHours, pickFollowUp, shouldSend } from './lib/index.mjs'
+import { addTask, completeTask, composeMessage, dayKey, decide, hasFreshEvents, isQuietHours, pickFollowUp, pickOpenTask, shouldSend } from './lib/index.mjs'
 
 /** 造一个固定的时间点，避免测试依赖当前时刻。 */
 const at = (h, m = 0) => new Date(2026, 9, 30, h, m, 0)
@@ -174,6 +174,83 @@ const baseState = { lastSentAt: 0, lastUserMessageAt: 0, dailyCount: {} }
   assert.equal(shouldSend(spoke, noon, {}).reason, 'user-active')
   assert.equal(shouldSend(spoke, noon, { silenceMs: 1 * 3_600_000 }).send, true, '沉默门槛改成 1 小时就放行')
   console.log('OK 门槛可配置')
+}
+
+// ---- 待办：自主唤醒的依据 ----
+{
+  let tasks = []
+  const first = addTask(tasks, '把设置页的日记开关做完', 1000)
+  assert.ok(first.task, '应该记下一条')
+  assert.equal(first.task.id, 1)
+  assert.equal(first.task.status, 'open')
+  tasks = first.tasks
+
+  const second = addTask(tasks, '给语料插件补一个按天统计', 2000)
+  tasks = second.tasks
+  assert.equal(second.task.id, 2)
+
+  assert.equal(addTask(tasks, '   ', 3000).task, null, '空白不记')
+
+  // 挑最前面的那条
+  assert.equal(pickOpenTask(tasks, 5000).id, 1)
+
+  // 提醒过之后，12 小时内不再挑它
+  tasks = tasks.map((t) => (t.id === 1 ? { ...t, nudgedAt: 5000 } : t))
+  assert.equal(pickOpenTask(tasks, 5000 + 3600_000).id, 2, '刚提醒过的先跳过')
+  assert.equal(pickOpenTask(tasks, 5000 + 13 * 3600_000).id, 1, '过了 12 小时又能提醒')
+
+  // 做完就不再是待办
+  const done = completeTask(tasks, 1, 9000, '已经推上去了')
+  assert.equal(done.task.status, 'done')
+  assert.equal(done.task.note, '已经推上去了')
+  tasks = done.tasks
+  assert.equal(pickOpenTask(tasks, 9000).id, 2)
+  assert.equal(completeTask(tasks, 999, 9000), null)
+  console.log('OK 待办')
+}
+
+// ---- decide：有待办就先推进，没动静就休息 ----
+{
+  const now = at(14)
+  const idle = { lastSentAt: 0, lastUserMessageAt: 0, dailyCount: {} }
+
+  const withTask = decide({}, idle, now, {}, { task: { id: 1, text: 'x' }, hasNewEvents: true })
+  assert.equal(withTask.send, true)
+  assert.equal(withTask.reason, 'pending-work', '有事没做完就优先推进它')
+
+  const nothing = decide({}, idle, now, {}, { task: null, hasNewEvents: false })
+  assert.equal(nothing.send, false)
+  assert.equal(nothing.reason, 'resting', '既没事也没新动静，就该休息')
+
+  // 有新动静还是可以说一句
+  assert.equal(decide({}, idle, now, {}, { task: null, hasNewEvents: true }).send, true)
+  // 不确定有没有新动静时，不当作「没有」
+  assert.equal(decide({}, idle, now, {}, { task: null, hasNewEvents: null }).send, true)
+  // 关掉「自己决定休息」就退回老行为
+  assert.equal(decide({}, idle, now, { restWhenIdle: false }, { task: null, hasNewEvents: false }).send, true)
+  // 手动触发无视一切
+  assert.equal(decide({ force: true }, idle, now, {}, { hasNewEvents: false }).reason, 'forced')
+  console.log('OK decide 自主判断')
+}
+
+// ---- hasFreshEvents：有没有新动静 ----
+{
+  const { DatabaseSync } = await import('node:sqlite')
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'proactive-'))
+  const path = join(dir, 'memory.db')
+  const db = new DatabaseSync(path)
+  db.exec('CREATE TABLE events (id INTEGER PRIMARY KEY, at INTEGER NOT NULL)')
+  db.prepare('INSERT INTO events(at) VALUES(?)').run(5000)
+  db.close()
+
+  assert.equal(hasFreshEvents(4000, path), true, '上次说话之后有新事件')
+  assert.equal(hasFreshEvents(5000, path), false, '正好同一时刻不算新的')
+  assert.equal(hasFreshEvents(6000, path), false)
+  assert.equal(hasFreshEvents(0, '/nonexistent/memory.db'), null, '读不到就说不知道，别当成没有')
+  console.log('OK 新动静判断')
 }
 
 console.log('\n全部通过')

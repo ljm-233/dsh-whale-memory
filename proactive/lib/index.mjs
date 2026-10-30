@@ -25,6 +25,8 @@ import { join, resolve, isAbsolute } from 'node:path'
 
 const DEFAULT_DIR = join(homedir(), '.dsh', 'proactive-message')
 const STATE_FILE = 'state.json'
+/** 待办：没做完的事，唤醒时优先推进。 */
+const TASKS_FILE = 'tasks.json'
 
 /** 检查间隔：每 30 分钟看一次该不该发。 */
 const TICK_MS = 30 * 60 * 1000
@@ -111,6 +113,91 @@ export function shouldSend(state, now, cfg = {}) {
   return { send: true, reason: lastUser > 0 ? 'silence' : 'never-heard', kind: 'silence' }
 }
 
+/**
+ * 自那以后有没有新事件。
+ *
+ * @param {number} lastSentAt 上次主动说话的时间
+ * @param {string} [dbPath] 事件库
+ * @returns {boolean|null} 读不到就返回 null（不确定，不当作「没有」）
+ */
+export function hasFreshEvents(lastSentAt, dbPath = MEMORY_DB) {
+  try {
+    if (!existsSync(dbPath)) return null
+    const db = new DatabaseSync(dbPath, { readOnly: true })
+    const row = db.prepare('SELECT MAX(at) AS m FROM events').get()
+    db.close()
+    const newest = Number(row?.m) || 0
+    if (newest === 0) return false
+    return newest > (Number(lastSentAt) || 0)
+  } catch {
+    return null
+  }
+}
+
+/** 截断长文，别把消息撑爆。 */
+function clampText(text, n) {
+  const t = String(text ?? '').replace(/\s+/gu, ' ').trim()
+  return t.length <= n ? t : `${t.slice(0, n - 1)}…`
+}
+
+/** 同一件事最多隔多久再提醒一次。 */
+const NUDGE_QUIET_MS = 12 * 60 * 60 * 1000
+
+/**
+ * 加一件待办。纯函数：返回新数组和新建的那条。
+ *
+ * @param {Array} tasks 现有待办
+ * @param {string} text 内容
+ * @param {number} now 时间戳
+ * @returns {{tasks:Array, task:object|null}}
+ */
+export function addTask(tasks, text, now) {
+  const body = String(text ?? '').replace(/\s+/gu, ' ').trim()
+  if (body === '') return { tasks, task: null }
+  const list = Array.isArray(tasks) ? tasks : []
+  const id = list.reduce((max, t) => Math.max(max, Number(t.id) || 0), 0) + 1
+  const task = { id, text: body.slice(0, 200), status: 'open', createdAt: now, updatedAt: now, nudgedAt: 0, note: '' }
+  return { tasks: [...list, task], task }
+}
+
+/**
+ * 标记做完。
+ *
+ * @param {Array} tasks 现有待办
+ * @param {number} id 编号
+ * @param {number} now 时间戳
+ * @param {string} [note] 结果
+ * @returns {{tasks:Array, task:object}|null}
+ */
+export function completeTask(tasks, id, now, note = '') {
+  const list = Array.isArray(tasks) ? tasks : []
+  const target = list.find((t) => Number(t.id) === Number(id))
+  if (!target) return null
+  const done = { ...target, status: 'done', updatedAt: now, note: String(note ?? '').slice(0, 200) }
+  return { tasks: list.map((t) => (Number(t.id) === Number(id) ? done : t)), task: done }
+}
+
+/**
+ * 挑一件该提醒的事。
+ *
+ * 只挑还在进行、且最近没提醒过的——同一件事一天念叨一次就够了。
+ *
+ * @param {Array} tasks 待办
+ * @param {number} now 时间戳
+ * @param {number} [quietMs] 提醒间隔
+ * @returns {object|null}
+ */
+export function pickOpenTask(tasks, now, quietMs = NUDGE_QUIET_MS) {
+  const list = Array.isArray(tasks) ? tasks : []
+  for (const t of list) {
+    if (t.status !== 'open') continue
+    const nudged = Number(t.nudgedAt) || 0
+    if (nudged !== 0 && now - nudged < quietMs) continue
+    return t
+  }
+  return null
+}
+
 /** 当天 key，用于日配额。 */
 export function dayKey(at) {
   const p = (n) => String(n).padStart(2, '0')
@@ -163,11 +250,21 @@ export function pickFollowUp(db, sinceMs = 7 * 86400000) {
  * @param {object} config 配置
  * @returns {{send:boolean,reason?:string,kind?:string}}
  */
-export function decide(opts, state, now, config) {
+export function decide(opts, state, now, config, context = {}) {
   if (opts && opts.force === true) {
     return { send: true, reason: 'forced', kind: opts.kind ?? 'silence' }
   }
-  return shouldSend(state, now, config)
+  const gate = shouldSend(state, now, config)
+  if (!gate.send) return gate
+
+  // 有没做完的事，优先推进它——这比「沉默太久打个招呼」有意义。
+  if (context.task) return { send: true, reason: 'pending-work', kind: 'followUp' }
+
+  // 没有任何新动静，也没事要做：那是休息，不是失职。
+  if (context.hasNewEvents === false && config.restWhenIdle !== false) {
+    return { send: false, reason: 'resting' }
+  }
+  return gate
 }
 
 export function composeMessage(kind, memo) {
@@ -209,6 +306,26 @@ export function apply(ctx, config = {}) {
   })()
   mkdirSync(dir, { recursive: true })
   const statePath = join(dir, STATE_FILE)
+  const tasksPath = join(dir, TASKS_FILE)
+
+  /** @type {Array} */
+  let tasks = []
+  const loadTasks = () => {
+    try {
+      if (existsSync(tasksPath)) {
+        const raw = JSON.parse(readFileSync(tasksPath, 'utf8'))
+        tasks = Array.isArray(raw) ? raw : []
+      }
+    } catch { tasks = [] }
+  }
+  const saveTasks = () => {
+    try {
+      const tmp = `${tasksPath}.tmp`
+      writeFileSync(tmp, JSON.stringify(tasks, null, 2), 'utf8')
+      renameSync(tmp, tasksPath)
+    } catch { /* 写失败不阻塞 */ }
+  }
+  loadTasks()
 
   /** @type {{lastSentAt:number, lastUserMessageAt:number, dailyCount:Record<string,number>, sentLog:Array}} */
   let state = { lastSentAt: 0, lastUserMessageAt: 0, dailyCount: {}, sentLog: [] }
@@ -262,7 +379,11 @@ export function apply(ctx, config = {}) {
     }
 
     const now = new Date()
-    const decision = decide(opts, state, now, limits())
+    const openTask = pickOpenTask(tasks, now.getTime())
+    const decision = decide(opts, state, now, limits(), {
+      task: openTask,
+      hasNewEvents: hasFreshEvents(state.lastSentAt),
+    })
     if (!decision.send) return { sent: false, reason: decision.reason }
 
     // 找素材
@@ -283,6 +404,10 @@ export function apply(ctx, config = {}) {
       } catch { /* 记忆库读不了就跳过 */ }
     }
 
+    if (text === '' && openTask) {
+      kind = 'followUp'
+      text = `还有件事没做完：${clampText(openTask.text, 60)}`
+    }
     if (text === '') text = composeMessage(kind)
 
     const result = await dshIm.send(botId, targetId, text, { format: 'plain' })
@@ -294,6 +419,10 @@ export function apply(ctx, config = {}) {
         const today = dayKey(now)
         state.lastSentAt = now.getTime()
         state.dailyCount[today] = (state.dailyCount[today] ?? 0) + 1
+      }
+      if (!forced && openTask) {
+        tasks = tasks.map((t) => (t.id === openTask.id ? { ...t, nudgedAt: now.getTime(), updatedAt: now.getTime() } : t))
+        saveTasks()
       }
       state.sentLog.push({ at: now.getTime(), kind, text, forced })
       if (state.sentLog.length > 50) state.sentLog = state.sentLog.slice(-50)
@@ -316,6 +445,108 @@ export function apply(ctx, config = {}) {
   }, 60_000)
   timer.unref?.()
 
+  // ---- 待办工具：让我知道自己还有没做完的事 ----
+  if (defineTool !== null) {
+    ctx.inject(['tools'], (toolsCtx) => {
+      toolsCtx.effect(() => [
+        toolsCtx.tools.register(defineTool({
+          name: 'work_add',
+          description: 'Remember something unfinished. Waking hours check this first, so you continue real work instead of greeting nobody.',
+          parameters: {
+            text: { type: 'string', required: true, description: 'What still needs doing.' },
+          },
+          output: {
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                ok: { type: 'boolean', required: true },
+                id: { type: 'number' },
+                task: { type: 'string' },
+              },
+            },
+            render: (_args, v) => [{ type: 'text', text: v.ok ? `记下了 #${v.id}：${v.task}` : '没记上。' }],
+          },
+          execute(args) {
+            const result = addTask(tasks, args.text, Date.now())
+            if (result.task === null) return { ok: false }
+            tasks = result.tasks
+            saveTasks()
+            return { ok: true, id: result.task.id, task: result.task.text }
+          },
+        })),
+
+        toolsCtx.tools.register(defineTool({
+          name: 'work_list',
+          description: 'List unfinished work items. Read-only.',
+          parameters: {},
+          output: {
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                open: { type: 'number', required: true },
+                items: {
+                  type: 'array',
+                  required: true,
+                  items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      id: { type: 'number', required: true },
+                      text: { type: 'string', required: true },
+                      nudged: { type: 'boolean', required: true },
+                    },
+                  },
+                },
+              },
+            },
+            render: (_args, v) => [{
+              type: 'text',
+              text: v.open === 0
+                ? '没有没做完的事。'
+                : v.items.map((t) => `#${t.id} ${t.text}${t.nudged ? '（提醒过）' : ''}`).join('\n'),
+            }],
+          },
+          execute() {
+            const open = tasks.filter((t) => t.status === 'open')
+            return {
+              open: open.length,
+              items: open.map((t) => ({ id: t.id, text: t.text, nudged: (Number(t.nudgedAt) || 0) > 0 })),
+            }
+          },
+        })),
+
+        toolsCtx.tools.register(defineTool({
+          name: 'work_done',
+          description: 'Mark one work item as finished, optionally with a result note.',
+          parameters: {
+            id: { type: 'number', required: true, description: 'Item id from work_list.' },
+            note: { type: 'string', description: 'What actually happened.' },
+          },
+          output: {
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                ok: { type: 'boolean', required: true },
+                text: { type: 'string' },
+              },
+            },
+            render: (_args, v) => [{ type: 'text', text: v.ok ? `做完了：${v.text}` : '没有这一条。' }],
+          },
+          execute(args) {
+            const result = completeTask(tasks, args.id, Date.now(), args.note)
+            if (result === null) return { ok: false, text: '' }
+            tasks = result.tasks
+            saveTasks()
+            return { ok: true, text: result.task.text }
+          },
+        })),
+      ], 'dsh-proactive-message: work tools')
+    })
+  }
+
   // ---- 端点：状态与手动触发 ----
   ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(() => [
@@ -334,6 +565,11 @@ export function apply(ctx, config = {}) {
             limits: limits(),
             tickMinutes: tickMs() / 60_000,
             isQuietHours: isQuietHours(now, limits()),
+            work: {
+              open: tasks.filter((t) => t.status === 'open').length,
+              next: pickOpenTask(tasks, now.getTime()),
+            },
+            hasNewEvents: hasFreshEvents(state.lastSentAt),
             decision,
             state: {
               lastSentAt: state.lastSentAt || null,
@@ -370,6 +606,12 @@ export function apply(ctx, config = {}) {
 }
 
 export const name = 'dsh-proactive-message'
+
+/** 模型侧工具工厂。拿不到就只保留 HTTP 端点。 */
+let defineTool = null
+try {
+  ;({ defineTool } = await import('@deepseek-ai/dsh-tools'))
+} catch { /* 没有 dsh-tools 就不注册工具 */ }
 
 /**
  * 配置 schema —— 设置页靠它生成表单。
