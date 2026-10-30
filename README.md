@@ -278,6 +278,18 @@ node scripts/sync-shared.mjs --check   # 校验副本与源一致
 
 ## 自检
 
+一条命令跑完三个包：
+
+```bash
+node scripts/check-all.mjs
+```
+
+它先校验共用工具三份副本一致，再逐包跑语法与用例。
+
+单独跑的三个文件：
+
+
+
 ```bash
 node test-selfcheck.mjs   # Host 纯函数：情绪、线索、打分、修正、事件线、取舍
 node test-routes.mjs      # 端点：状态、热冷区、日记、备份、时间线、工具
