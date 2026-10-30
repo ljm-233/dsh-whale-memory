@@ -143,6 +143,7 @@ for (const text of [
   '记忆注入', '主动联想', '压缩存档',
   '注入字符上限', '想起门槛', '顺手私发主人一份',
   '主动消息 · 什么时候可以说话', '主动消息 · 免打扰', '每天最多发几条', '每多少分钟检查一次',
+  '记忆内容', '热区', '冷区', '只读',
 ]) {
   assert.ok(html.includes(text), `页面里应该出现「${text}」`)
 }
@@ -150,6 +151,13 @@ assert.ok(html.includes('value="1000"'), '应该渲染出当前值 1000')
 assert.ok(html.includes('budgetChars · 已改'), '用户改过的项要标出来')
 assert.ok(html.includes('archive.notify · 已改'), '嵌套字段的覆盖标记也要认')
 assert.ok(!html.includes('archive.enabled · 已改'), '没改过的项不能误标')
+// ---- 记忆内容是只读的 ----
+{
+  // 所有可写控件都来自 settingRow（有 onWrite）；记忆内容那一块只发 GET 请求。
+  assert.ok(!html.includes('<textarea'), '不该有可自由编辑记忆内容的输入框')
+  console.log('OK 记忆内容只读')
+}
+
 console.log('OK 客户端设置页')
 
 // ---- 写入路径 ----

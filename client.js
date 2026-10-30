@@ -274,6 +274,106 @@ window.__ModuleLoader__.load({
         )
       }
 
+      /** 情绪键 → 中文，只用于显示。 */
+      const EMO_TEXT = { tired: '累', sad: '难过', angry: '烦', happy: '开心', anxious: '焦虑' }
+
+      const fmtTime = (ms) => {
+        const d = new Date(ms)
+        const p2 = (n) => String(n).padStart(2, '0')
+        return `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`
+      }
+
+      /**
+       * 热区 / 冷区的内容预览。
+       *
+       * 纯只读：这里只有文字和一个切换按钮，没有任何写入口——
+       * 记忆内容该怎么变是插件自己决定的，不该由设置页手动改。
+       */
+      const EntriesView = () => {
+        const [zone, setZone] = React.useState('cold')
+        const [data, setData] = React.useState(null)
+        const [failed, setFailed] = React.useState(false)
+        const [seq, setSeq] = React.useState(0)
+
+        React.useEffect(() => {
+          let alive = true
+          setFailed(false)
+          fetch(`/dsh-whale-memory/entries?zone=${zone}&limit=50`, { headers: { accept: 'application/json' } })
+            .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+            .then((json) => { if (alive) setData(json) })
+            .catch(() => { if (alive) { setData(null); setFailed(true) } })
+          return () => { alive = false }
+        }, [zone, seq])
+
+        const tab = (key, label) => h('button', {
+          type: 'button',
+          onClick: () => setZone(key),
+          style: {
+            border: '1px solid currentColor',
+            borderRadius: '6px',
+            padding: '2px 10px',
+            fontSize: '12px',
+            cursor: 'pointer',
+            color: 'inherit',
+            background: 'transparent',
+            opacity: zone === key ? 1 : 0.5,
+          },
+        }, label)
+
+        const items = data === null ? [] : data.items
+
+        return h(
+          'section',
+          { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+          h('h3', { style: { fontSize: '13px', margin: '0 0 2px' } }, '记忆内容'),
+          h(
+            'p',
+            { style: { fontSize: '11px', opacity: 0.6, margin: '0 0 4px' } },
+            '只读，只是看一眼存了什么。热区是最近还在上下文里的，冷区是压下去、被想起时才取用的。',
+          ),
+          h(
+            'div',
+            { style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0' } },
+            tab('hot', '热区'),
+            tab('cold', '冷区'),
+            h('span', { style: { ...metaStyle, marginLeft: '4px' } },
+              data === null ? '' : `${data.total} 条，显示 ${data.shown}`),
+            h('button', {
+              type: 'button',
+              onClick: () => setSeq((n) => n + 1),
+              title: '重新读一次',
+              style: {
+                border: 'none', background: 'transparent', cursor: 'pointer',
+                fontSize: '11px', opacity: 0.6, padding: '2px 4px', color: 'inherit',
+              },
+            }, '刷新'),
+          ),
+          failed
+            ? h('p', { style: { fontSize: '12px', opacity: 0.7 } }, '读不到记忆库。')
+            : items.length === 0
+              ? h('p', { style: { fontSize: '12px', opacity: 0.55 } }, data === null ? '读取中…' : '这条区是空的。')
+              : h(
+                'ol',
+                { style: { display: 'flex', flexDirection: 'column', gap: '10px', margin: 0, padding: '0 0 0 18px' } },
+                ...items.map((item) => h(
+                  'li',
+                  { key: String(item.id), style: { fontSize: '12px', lineHeight: 1.5 } },
+                  h(
+                    'div',
+                    { style: { fontSize: '11px', opacity: 0.5, fontFamily: 'monospace' } },
+                    `${fmtTime(item.at)} · 权重 ${Math.round(item.weight * 10) / 10}${
+                      item.emo.length === 0 ? '' : ` · ${item.emo.map((k) => EMO_TEXT[k] ?? k).join('/')}`
+                    }`,
+                  ),
+                  h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, item.user),
+                  item.assistant === ''
+                    ? null
+                    : h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', opacity: 0.55 } }, item.assistant),
+                )),
+              ),
+        )
+      }
+
       const Panel = () => {
         // 两个命名空间，各自一份快照。服务缺席时用占位表单，
         // 这样 hooks 的顺序和数量每轮都一样。
@@ -364,6 +464,7 @@ window.__ModuleLoader__.load({
               })),
             )
           }),
+          h(EntriesView, { key: 'entries' }),
         )
       }
 

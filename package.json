@@ -20,8 +20,8 @@
     "README.md"
   ],
   "scripts": {
-    "check": "node --check lib/index.mjs && node --check client.js && node test-selfcheck.mjs && node test-client.mjs",
-    "test": "node test-selfcheck.mjs && node test-client.mjs",
+    "check": "node --check lib/index.mjs && node --check client.js && node test-selfcheck.mjs && node test-routes.mjs && node test-client.mjs",
+    "test": "node test-selfcheck.mjs && node test-routes.mjs && node test-client.mjs",
     "ruminate": "node ruminate.js"
   },
   "keywords": [
