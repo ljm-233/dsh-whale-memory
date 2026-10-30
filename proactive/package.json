@@ -8,17 +8,15 @@
   "exports": {
     ".": "./lib/index.mjs",
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./package.json": "./package.json",
-    "./client": "./client.js"
+    "./package.json": "./package.json"
   },
   "files": [
     "lib",
-    "client.js",
     "cordis.patch.yml"
   ],
   "scripts": {
-    "check": "node --check lib/index.mjs && node --check client.js && node test-selfcheck.mjs && node test-client.mjs",
-    "test": "node test-selfcheck.mjs && node test-client.mjs"
+    "check": "node --check lib/index.mjs && node test-selfcheck.mjs",
+    "test": "node test-selfcheck.mjs"
   },
   "keywords": [
     "dsh-plugin",
@@ -30,14 +28,6 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "platform": "web",
-      "immediately": false,
-      "inject": [
-        "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-ui-renderer"
-      ]
     }
   }
 }

@@ -73,6 +73,7 @@ assert.equal(typeof plugin.apply, 'function')
 
 // ---- 模拟 slots / configForms ----
 const value = {
+  __ns: 'dsh-whale-memory',
   budgetChars: 1000,
   recentPairs: 4,
   factMax: 8,
@@ -84,15 +85,28 @@ const value = {
 const user = { budgetChars: 1500, archive: { notify: false } }
 const writes = []
 
-const form = {
+const makeForm = (val, usr) => ({
   getSnapshot: () => ({
-    status: 'ready', value, base: {}, user, revision: 3, writable: true,
+    status: 'ready', value: val, base: {}, user: usr, revision: 3, writable: true,
   }),
   subscribe: () => () => {},
-  set: (field, v) => { writes.push({ op: 'set', path: [field], value: v }); return Promise.resolve(true) },
-  unset: (field) => { writes.push({ op: 'unset', path: [field] }); return Promise.resolve(true) },
-  mutate: (ops) => { writes.push(...ops); return Promise.resolve(true) },
+  set: (field, v) => { writes.push({ op: 'set', ns: val.__ns, path: [field], value: v }); return Promise.resolve(true) },
+  unset: (field) => { writes.push({ op: 'unset', ns: val.__ns, path: [field] }); return Promise.resolve(true) },
+  mutate: (ops) => { writes.push(...ops.map((o) => ({ ...o, ns: val.__ns }))); return Promise.resolve(true) },
+})
+
+const proactiveValue = {
+  __ns: 'dsh-proactive-message',
+  dailyCap: 2,
+  cooldownHours: 6,
+  silenceHours: 8,
+  quietStart: 23,
+  quietEnd: 8,
+  tickMinutes: 30,
 }
+const proactiveUser = { dailyCap: 5 }
+const form = makeForm(value, user)
+const proactiveForm = makeForm(proactiveValue, proactiveUser)
 
 let registration = null
 const slots = {
@@ -105,7 +119,13 @@ const slots = {
 const ctx = {
   get: (name) => {
     if (name === 'slots') return slots
-    if (name === 'configForms') return { get: (ns) => (ns === 'dsh-whale-memory' ? form : undefined) }
+    if (name === 'configForms') {
+      return {
+        get: (ns) => (ns === 'dsh-whale-memory' ? form
+          : ns === 'dsh-proactive-message' ? proactiveForm
+            : undefined),
+      }
+    }
     return undefined
   },
 }
@@ -119,7 +139,11 @@ assert.equal(registration.spec.label(), '鲸娘记忆')
 // ---- 渲染 ----
 const html = renderToStaticMarkup(React.createElement(registration.component))
 
-for (const text of ['记忆注入', '主动联想', '压缩存档', '注入字符上限', '想起门槛', '顺手私发主人一份']) {
+for (const text of [
+  '记忆注入', '主动联想', '压缩存档',
+  '注入字符上限', '想起门槛', '顺手私发主人一份',
+  '主动消息 · 什么时候可以说话', '主动消息 · 免打扰', '每天最多发几条', '每多少分钟检查一次',
+]) {
   assert.ok(html.includes(text), `页面里应该出现「${text}」`)
 }
 assert.ok(html.includes('value="1000"'), '应该渲染出当前值 1000')
@@ -131,18 +155,23 @@ console.log('OK 客户端设置页')
 // ---- 写入路径 ----
 // 路径 → 写法的映射是纯函数，直接调，不用模拟点击。
 const { writePath, resetPath, normalizeNumber, GROUPS } = plugin.__test
-assert.equal(GROUPS.length, 3)
-assert.equal(GROUPS.flatMap((g) => g.fields).length, 8, '一共 8 个设置项')
+assert.equal(GROUPS.length, 5)
+assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 3, '记忆三组')
+assert.equal(GROUPS.filter((g) => g.form === 'proactive').length, 2, '主动消息两组')
+assert.equal(GROUPS.flatMap((g) => g.fields).length, 14, '一共 14 个设置项')
 
+writes.length = 0
 writePath(form, ['budgetChars'], 1500)
 writePath(form, ['archive', 'notify'], false)
 resetPath(form, ['budgetChars'])
 resetPath(form, ['archive', 'notify'])
+writePath(proactiveForm, ['dailyCap'], 7)
 
-assert.deepEqual(writes[0], { op: 'set', path: ['budgetChars'], value: 1500 }, '一级字段走 set')
-assert.deepEqual(writes[1], { op: 'set', path: ['archive', 'notify'], value: false }, '嵌套字段走 mutate + 路径')
-assert.deepEqual(writes[2], { op: 'unset', path: ['budgetChars'] }, '恢复默认走 unset')
-assert.deepEqual(writes[3], { op: 'unset', path: ['archive', 'notify'] }, '嵌套恢复默认也走 unset')
+assert.deepEqual(writes[0], { op: 'set', ns: 'dsh-whale-memory', path: ['budgetChars'], value: 1500 }, '一级字段走 set')
+assert.deepEqual(writes[1], { op: 'set', ns: 'dsh-whale-memory', path: ['archive', 'notify'], value: false }, '嵌套字段走 mutate + 路径')
+assert.deepEqual(writes[2], { op: 'unset', ns: 'dsh-whale-memory', path: ['budgetChars'] }, '恢复默认走 unset')
+assert.deepEqual(writes[3], { op: 'unset', ns: 'dsh-whale-memory', path: ['archive', 'notify'] }, '嵌套恢复默认也走 unset')
+assert.deepEqual(writes[4], { op: 'set', ns: 'dsh-proactive-message', path: ['dailyCap'], value: 7 }, '主动消息的字段写进它自己的命名空间')
 console.log('OK 设置页写入路径')
 
 // ---- 服务缺席时不能崩 ----
