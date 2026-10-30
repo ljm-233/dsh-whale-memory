@@ -129,6 +129,17 @@ Linux 那套 systemd 用不上，换成任务计划程序：
 
 自己手写的服务也能用——把 `-ServiceScript` 指到你的脚本即可，只要它监听 `127.0.0.1:8377` 并在 `/health` 返回 `dims: 512`。
 
+**注册计划任务报「拒绝访问」**（需要管理员权限时常见），换成启动文件夹，不需要提权：
+
+```powershell
+.\scripts\install-embed-startup.ps1 `
+    -ServiceScript "C:\...\patches\embed\embed_server.py" `
+    -ModelDir      "C:\...\patches\embed" `
+    -Libs          "C:\...\patches\embed\pylibs"
+```
+
+它往 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\dsh-whale-embed.vbs` 放一个隐藏窗口的启动脚本，登录即起，不弹黑框。想立刻生效就双击那个 `.vbs`。
+
 胡思乱想那个还是命令行：
 
 ```powershell
