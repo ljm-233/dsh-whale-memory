@@ -21,6 +21,7 @@ import {
   allowsInitiative, shouldSelfWake, addTask, completeTask, pickOpenTask,
   dayKey, pickFollowUp, decide, composeMessage,
 } from './core.mjs'
+import { cfgVal } from './shared.mjs'
 export {
   isQuietHours, shouldSend, hasFreshEvents, textOfMessage, allowsInitiative,
   shouldSelfWake, addTask, completeTask, pickOpenTask, dayKey, pickFollowUp,
@@ -29,7 +30,6 @@ export {
 
 export function apply(ctx, config = {}) {
   /** 读一项配置：声明了 .volatile() 的字段是活引用，每次都要 .get()。 */
-  const cfgVal = (v, fallback) => (v && typeof v.get === 'function' ? (v.get() ?? fallback) : (v ?? fallback))
 
   /** 四个门槛 + 检查频率，全部可热改。 */
   const limits = () => ({

@@ -54,6 +54,7 @@
 | `lib/prompt.mjs` | 系统提示词两段：纪律（静态）+ 偏好（会变） |
 | `lib/tools.mjs` | 模型可调用的工具 |
 | `lib/routes.mjs` | HTTP 端点 |
+| `lib/shared.mjs` | 三个包共用的零碎工具（生成文件，别手改） |
 | `client.js` | 浏览器端设置页（手写 bundle，无构建） |
 
 ---
@@ -260,6 +261,20 @@ systemctl --user enable --now dsh-whale-ruminate.timer
 数据落在 `~/.dsh/whale-memory/memory.db`（WAL）。
 
 ---
+
+## 共用工具
+
+`localStamp`、`dayKeyOf`、`clamp`、`cfgVal` 这几个零碎，三个包都要用。
+
+单一源放在 `shared/helpers.mjs`，用 `node scripts/sync-shared.mjs` 复制成每个包里的 `lib/shared.mjs`。
+不跨包 import，是因为三个包各自独立安装——互相依赖会让单独装一个就崩。
+
+```bash
+node scripts/sync-shared.mjs           # 同步
+node scripts/sync-shared.mjs --check   # 校验副本与源一致
+```
+
+改了源忘记同步，`--check` 会报出来。
 
 ## 自检
 

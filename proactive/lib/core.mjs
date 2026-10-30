@@ -7,6 +7,8 @@ import { DatabaseSync } from 'node:sqlite'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { clampText } from './shared.mjs'
+export { clampText } from './shared.mjs'
 
 export const DEFAULT_DIR = join(homedir(), '.dsh', 'proactive-message')
 export const STATE_FILE = 'state.json'
@@ -135,10 +137,6 @@ export function textOfMessage(message) {
 }
 
 /** 截断长文，别把消息撑爆。 */
-export function clampText(text, n) {
-  const t = String(text ?? '').replace(/\s+/gu, ' ').trim()
-  return t.length <= n ? t : `${t.slice(0, n - 1)}…`
-}
 
 /** 主动搭话：默认一天两次，间隔至少三小时。 */
 export const INITIATIVE_CAP = 2

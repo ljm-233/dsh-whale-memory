@@ -41,6 +41,7 @@ import {
   DEFAULT_AI_IDS, DEFAULT_HUMAN_IDS, AI_FEATURES, HUMAN_FEATURES,
   classifySender, cleanText, analyzeStyle, renderStyleHint, searchMessages, corpusStats,
 } from './core.mjs'
+import { localStamp } from './shared.mjs'
 export {
   classifySender, cleanText, analyzeStyle, renderStyleHint, searchMessages, corpusStats,
 } from './core.mjs'
@@ -410,8 +411,3 @@ function formatSpan(s) {
 }
 
 /** 本地时区的 YYYY-MM-DD HH:mm。 */
-function localStamp(ms) {
-  const d = new Date(ms)
-  const p = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
-}
