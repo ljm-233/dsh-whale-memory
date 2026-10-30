@@ -13,6 +13,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)))
 
 const steps = [
   ['共用工具副本', ['node', [join(root, 'scripts', 'sync-shared.mjs'), '--check']]],
+  ['未定义名字', ['node', [join(root, 'scripts', 'lint-undefined.mjs')]], true],
   ['主插件 语法+用例', ['node', [join(root, 'lib', 'index.mjs')]]],
   ['主插件 selfcheck', ['node', [join(root, 'test-selfcheck.mjs')]]],
   ['主插件 端点', ['node', [join(root, 'test-routes.mjs')]]],
@@ -23,12 +24,17 @@ const steps = [
 ]
 
 let failed = 0
-for (const [label, command] of steps) {
+for (const [label, command, soft] of steps) {
   const [cmd, args] = command
   // lib/index.mjs 只是 import 一遍，确认能加载
   const realArgs = args[0].endsWith('lib/index.mjs') ? ['--input-type=module', '-e', `await import(${JSON.stringify(args[0])})`] : args
   const result = spawnSync(cmd, realArgs, { cwd: root, encoding: 'utf8' })
   const ok = result.status === 0
+  // 软步骤：缺工具时跳过，不算失败
+  if (!ok && soft === true && `${result.stdout ?? ''}${result.stderr ?? ''}`.includes('SKIP')) {
+    console.log(`SKIP ${label}`)
+    continue
+  }
   if (!ok) failed += 1
   console.log(`${ok ? 'OK  ' : 'FAIL'} ${label}`)
   if (!ok) {

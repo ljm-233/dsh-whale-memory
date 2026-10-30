@@ -322,6 +322,7 @@ node test-client.mjs      # 设置页：模拟客户端模块运行时，SSR 出
 - **「自发翻群档」不应该是 bash 开 sqlite**：做成工具才是能力，否则只是绕过插件偷看文件
 - **自动回滚是陷阱**：备份能做，恢复必须人来点
 - **`force` 参数要真的有人用**：写了 `opts.force` 却没在判断里读它，等于没有
+- **拆模块最容易漏 import**：`join`、`blobToVec`、`textOf` 这类用了没引，只在被调用时炸，本地用例盖不到。所以加了 `scripts/lint-undefined.mjs`（借 tsc 的 checkJs 只抓 TS2304）并挂进 `check-all`
 
 ---
 
