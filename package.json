@@ -17,7 +17,9 @@
     "cordis.patch.yml",
     "ruminate.js",
     "embed_server.py",
-    "README.md"
+    "README.md",
+    "INSTALL.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "check": "node --check lib/index.mjs && node --check client.js && node test-selfcheck.mjs && node test-routes.mjs && node test-client.mjs",
@@ -58,5 +60,8 @@
   "bugs": {
     "url": "https://github.com/ljm-233/dsh-whale-memory/issues"
   },
-  "author": "ljm-233"
+  "author": "ljm-233",
+  "engines": {
+    "node": ">=22.5"
+  }
 }
