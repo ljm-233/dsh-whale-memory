@@ -85,18 +85,32 @@ dsh plugin --profile web add "$($PWD.Path)\proactive"
 
 ### 向量服务
 
+一条命令搞定（装依赖 + 下模型 + 起服务 + 自检）：
+
 ```powershell
-# 一次性装依赖
-uv pip install --target "$env:USERPROFILE\.dsh-whale\pylibs" onnxruntime numpy
-
-# 起服务
-.\scripts\run-embed.ps1
-
-# 验
-curl.exe http://127.0.0.1:8377/health
+.\scripts\setup-embed.ps1
 ```
 
-模型目录（`embed_server.py` 里的 `MODEL_DIR`）在 Windows 上要改成实际路径，比如 `C:\models\bge-small-zh-v1.5-int8\`。
+需要先有 Python 3.10+ 和 uv（`winget install astral-sh.uv`）。
+
+想手动来也行：
+
+```powershell
+uv pip install --target "$env:USERPROFILE\.dsh-whale\pylibs" onnxruntime numpy
+
+$env:WHALE_MODEL_DIR = "$env:USERPROFILE\.dsh-whale\models\bge-small-zh-v1.5-int8"
+$env:PYTHONPATH     = "$env:USERPROFILE\.dsh-whale\pylibs"
+python .\embed_server.py
+```
+
+**模型目录用 `WHALE_MODEL_DIR` 指定，不用改代码。** 目录里要有 `model.onnx` 和 `tokenizer.json` 两个文件。
+
+模型可以从 HuggingFace 取：
+
+```powershell
+uv pip install --target $env:PYTHONPATH huggingface_hub
+python -c "from huggingface_hub import hf_hub_download as d; [d('BAAI/bge-small-zh-v1.5', n, local_dir=r'%USERPROFILE%\.dsh-whale\models\bge-small-zh-v1.5-int8') for n in ('model.onnx','tokenizer.json')]"
+```
 
 ### 开机自启 / 定时任务
 

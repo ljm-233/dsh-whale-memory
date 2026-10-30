@@ -16,7 +16,11 @@ import threading
 import unicodedata
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
-MODEL_DIR = "/usr/share/miyu/models/bge-small-zh-v1.5-int8"
+# 模型目录：优先用环境变量，方便 Windows / 别的机器直接指定，不用改代码
+MODEL_DIR = os.environ.get(
+    "WHALE_MODEL_DIR",
+    r"/usr/share/miyu/models/bge-small-zh-v1.5-int8",
+)
 MAX_LEN = 512
 PORT = int(os.environ.get("EMBED_PORT", "8377"))
 
@@ -173,6 +177,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    if not os.path.isdir(MODEL_DIR):
+        raise SystemExit(
+            f"模型目录不存在：{MODEL_DIR}\n"
+            "用 WHALE_MODEL_DIR 环境变量指到实际目录（里面要有 model.onnx 和 tokenizer.json）"
+        )
     load()
     print(f"embed service ready on 127.0.0.1:{PORT}", flush=True)
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
