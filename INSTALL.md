@@ -116,11 +116,22 @@ python -c "from huggingface_hub import hf_hub_download as d; [d('BAAI/bge-small-
 
 Linux 那套 systemd 用不上，换成任务计划程序：
 
-```powershell
-# 向量服务：登录时启动
-schtasks /create /tn "dsh-whale-embed" /tr "powershell -NoProfile -File %USERPROFILE%\dsh-whale-memory\scripts\run-embed.ps1" /sc onlogon
+向量服务用现成的注册脚本（路径按自己机器改）：
 
-# 胡思乱想：每两小时跑一次
+```powershell
+.\scripts\register-embed-task.ps1 `
+    -ServiceScript "C:\Users\你\dsh-whale-memory\embed_server.py" `
+    -ModelDir      "C:\Users\你\.dsh-whale\models\bge-small-zh-v1.5-int8" `
+    -Libs          "C:\Users\你\.dsh-whale\pylibs"
+```
+
+它会注册一个「登录时启动」的计划任务（`dsh-whale-embed`），带失败重试、不设执行时限，并且当场起一次、自检 8377。重复跑会先删旧的，是幂等的。
+
+自己手写的服务也能用——把 `-ServiceScript` 指到你的脚本即可，只要它监听 `127.0.0.1:8377` 并在 `/health` 返回 `dims: 512`。
+
+胡思乱想那个还是命令行：
+
+```powershell
 schtasks /create /tn "dsh-whale-ruminate" /tr "node %USERPROFILE%\dsh-whale-memory\ruminate.js --count 1" /sc hourly /mo 2
 ```
 
