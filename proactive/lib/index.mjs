@@ -134,6 +134,21 @@ export function hasFreshEvents(lastSentAt, dbPath = MEMORY_DB) {
   }
 }
 
+/**
+ * 从一条消息里取出正文。
+ *
+ * @param {{content?:Array}} message 消息
+ * @returns {string}
+ */
+export function textOfMessage(message) {
+  const blocks = Array.isArray(message?.content) ? message.content : []
+  return blocks
+    .filter((b) => b && b.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text)
+    .join('\n')
+    .trim()
+}
+
 /** 截断长文，别把消息撑爆。 */
 function clampText(text, n) {
   const t = String(text ?? '').replace(/\s+/gu, ' ').trim()
@@ -432,6 +447,11 @@ export function apply(ctx, config = {}) {
   let dshIm = null
   ctx.inject(['dshIm'], (c) => { dshIm = c.dshIm })
 
+  /** 自己唤醒的那一轮，说完要把话转投到目标——它没有入站消息可回。 */
+  let relay = null
+  /** 转投的有效期：过了就别再等，免得深夜把陈年消息补发出去。 */
+  const RELAY_TTL_MS = 10 * 60 * 1000
+
   /** 能自主醒来干活的前提：拿得到 agents，并且主人明确开了这个开关。 */
   let agentsRef = null
   ctx.inject(['agents'], (c) => { agentsRef = c.agents })
@@ -480,8 +500,34 @@ export function apply(ctx, config = {}) {
 
     state.awakeCount[today] = (state.awakeCount[today] ?? 0) + 1
     save()
+    // 自己排的那一轮没有入站消息可回，正常投递链路不会把它发出去，
+    // 所以这里记下会话，等它说完再手动转投一次。
+    relay = { sessionId: String(agent.session?.id ?? ''), at: Date.now() }
     return { wake: true, reason: 'pending-work', task: verdict.task }
   }
+
+  // 自己唤醒那一轮说完的话，转投到目标会话。
+  ctx.on('session/event', (session, event) => {
+    if (relay === null) return
+    if (Date.now() - relay.at > RELAY_TTL_MS) { relay = null; return }
+    if (String(session?.id ?? '') !== relay.sessionId) return
+    if (event?.type !== 'assistant/message') return
+
+    const text = textOfMessage(event.data?.message ?? event.data)
+    if (text === '') return
+
+    const pending = relay
+    relay = null
+    if (!dshIm || typeof dshIm.send !== 'function' || botId === '' || targetId === '') return
+    dshIm.send(botId, targetId, text, { format: 'plain' }).then((result) => {
+      if (result?.sent !== true) return
+      // 转投成功也算说过话，记进日志（不占主动消息的配额）。
+      state.sentLog.push({ at: Date.now(), kind: 'self-wake', text, forced: true })
+      if (state.sentLog.length > 50) state.sentLog = state.sentLog.slice(-50)
+      state.lastSelfWakeRelayAt = Date.now()
+      save()
+    }).catch(() => undefined)
+  })
 
   // 记录主人的最后发言时间
   ctx.on('session/event', (session, event) => {

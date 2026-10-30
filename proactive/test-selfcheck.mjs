@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
-import { addTask, allowsInitiative, completeTask, composeMessage, dayKey, decide, hasFreshEvents, isQuietHours, pickFollowUp, pickOpenTask, shouldSelfWake, shouldSend } from './lib/index.mjs'
+import { addTask, allowsInitiative, textOfMessage, completeTask, composeMessage, dayKey, decide, hasFreshEvents, isQuietHours, pickFollowUp, pickOpenTask, shouldSelfWake, shouldSend } from './lib/index.mjs'
 
 /** 造一个固定的时间点，避免测试依赖当前时刻。 */
 const at = (h, m = 0) => new Date(2026, 9, 30, h, m, 0)
@@ -299,6 +299,18 @@ const baseState = { lastSentAt: 0, lastUserMessageAt: 0, dailyCount: {} }
   assert.equal(allowsInitiative({ initiative: { enabled: false } }, active, now).reason, 'initiative-off')
   assert.equal(allowsInitiative(cfg(), active, now).allow, true)
   console.log('OK 主动搭话')
+}
+
+// ---- textOfMessage：转投时取正文 ----
+{
+  assert.equal(textOfMessage({ content: [{ type: 'text', text: '在呢' }] }), '在呢')
+  assert.equal(textOfMessage({ content: [
+    { type: 'text', text: '第一段' }, { type: 'tool_use' }, { type: 'text', text: '第二段' },
+  ] }), '第一段\n第二段', '只取文字块')
+  assert.equal(textOfMessage({ content: [] }), '')
+  assert.equal(textOfMessage(null), '')
+  assert.equal(textOfMessage({ content: [{ type: 'text', text: '   ' }] }), '')
+  console.log('OK 转投取文')
 }
 
 console.log('\n全部通过')
