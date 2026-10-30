@@ -103,6 +103,9 @@ const run = (args) => tool.execute(args, {})
   assert.equal(rendered[0].type, 'text')
   assert.ok(rendered[0].text.includes('共 4 条匹配'))
   assert.ok(rendered[0].text.includes('辛会(human): 怎么又不回答了'))
+  assert.ok(rendered[0].text.includes('概况：4 条'), '要了 stats 就得把概况写出来')
+  assert.ok(rendered[0].text.includes('每天：'), '概况里要有按天的分布')
+  assert.ok(rendered[0].text.includes('发言最多的：ljm_QvQ 2'))
 
   // 空结果也要说人话
   const none = await run({ keyword: '根本没这回事' })

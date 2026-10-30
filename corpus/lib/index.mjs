@@ -637,14 +637,25 @@ function registerHistoryTool(ctx, db) {
             stats: { type: 'object', additionalProperties: true },
           },
         },
-        render: (_args, value) => [{
-          type: 'text',
-          text: value.messages.length === 0
-            ? `没有匹配的消息（库里有 ${value.total} 条符合条件）。`
+        render: (_args, value) => {
+          const lines = value.messages.length === 0
+            ? [`没有匹配的消息（库里有 ${value.total} 条符合条件）。`]
             : [`共 ${value.total} 条匹配，返回 ${value.shown} 条：`, ...value.messages.map(
               (m) => `[${m.day}] ${m.sender}(${m.kind}): ${m.text}`,
-            )].join('\n'),
-        }],
+            )]
+          // 要了概况就得给出来，否则等于没要。
+          if (value.stats) {
+            const s = value.stats
+            lines.push('', `概况：${s.total} 条，${formatSpan(s)}`)
+            if (s.byDay.length > 0) {
+              lines.push(`每天：${s.byDay.map((d) => `${d.day} ${d.count}`).join(' · ')}`)
+            }
+            if (s.bySender.length > 0) {
+              lines.push(`发言最多的：${s.bySender.slice(0, 5).map((x) => `${x.name} ${x.count}`).join(' · ')}`)
+            }
+          }
+          return [{ type: 'text', text: lines.join('\n') }]
+        },
       },
       execute(args) {
         const result = searchMessages(db, args)
@@ -664,6 +675,16 @@ function registerHistoryTool(ctx, db) {
       },
     })), 'dsh-group-corpus: history tool')
   })
+}
+
+/**
+ * 把概况的时间跨度写成人话。
+ * @param {{firstAt:number|null,lastAt:number|null}} s
+ * @returns {string}
+ */
+function formatSpan(s) {
+  if (!s.firstAt || !s.lastAt) return '库里还是空的'
+  return `${localStamp(s.firstAt)} 到 ${localStamp(s.lastAt)}`
 }
 
 /** 本地时区的 YYYY-MM-DD HH:mm。 */
