@@ -1,0 +1,11 @@
+# dsh-proactive-message bundle patch
+#
+# 主动发消息：沉默太久、有值得跟进的事、定时问候。
+# 走已有的 dshIm 投递服务，不新开通道。
+
+- insert:
+    - id: dsh-proactive-message
+      name: dsh-proactive-message
+      config:
+        botId: qq_5f99fa330846c135f796b602
+        targetId: ''
