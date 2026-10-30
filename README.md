@@ -182,6 +182,37 @@ curl -X POST http://127.0.0.1:3080/dsh-whale-memory/consolidate \
 
 ---
 
+
+## 单向同步：私聊能看到群里在聊什么
+
+群聊和私聊在 DSH 里是**两个 session**（`group:<openid>` 和 `c2c:<openid>`），
+私聊时看不到群里刚发生什么。
+
+`group-digest.js` 从语料里生成一份近期群聊摘要，写到
+`~/.dsh/whale-memory/group-digest.json`。whale-memory 在**私聊会话**注入时读它：
+
+```
+群里最近在聊（2 人，仅供了解，不必主动接话）：
+梁: 交给千问了
+ljm_QvQ: 你就不能接入自己的api吗
+...
+```
+
+**方向是单向的**：群 → 私聊。私聊的内容不会回流到群聊会话。
+
+判定私聊靠 `isPrivateSession()`：读 `integrations/dsh-qq/bots/<botId>/state.json`
+的会话映射，只有 `c2c:` 开头的才注入。群聊会话本来就在群里，不重复注入。
+
+摘要超过 12 小时不注入——免得说「刚才群里」其实是一天前的。
+
+生成摘要（可放进 timer）：
+
+```bash
+node group-digest.js --hours 24
+```
+
+---
+
 ## 配置
 
 | 常量 | 默认 | 含义 |
