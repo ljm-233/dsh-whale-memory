@@ -214,6 +214,25 @@ node group-digest.js --hours 24
 ---
 
 
+## 记忆备份
+
+全部记忆只有一份 SQLite，坏了就全没了。所以每 6 小时检查一次，当天没备份就备一份。
+
+用 `VACUUM INTO` 做快照：不停服务，产出的是完整独立的库。备完立刻打开跑 `PRAGMA integrity_check`，坏的当场发现——**备份的意义在于能恢复，不是有个文件在那儿**。
+
+```bash
+curl http://127.0.0.1:3080/dsh-whale-memory/backups          # 有哪些
+curl -X POST http://127.0.0.1:3080/dsh-whale-memory/backups # 立刻备一份
+```
+
+落在 `~/.dsh/whale-memory/backups/memory-YYYY-MM-DD.db`，默认保留 14 份，自动轮转。
+
+恢复永远由人来点：插件只备，不自动回滚——自动回滚会把「刚刚记下的东西」也一起滚掉。
+
+模型侧也可以自己叫一次：`memory_backup()` 备一份，`memory_backup(list: true)` 看看有哪些。
+
+---
+
 ## 压缩时我也有一票
 
 以前压缩是插件一个固定提示词说了算：不管这段经历值不值得，都压成一句话塞进冷区。

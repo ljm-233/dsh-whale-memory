@@ -9,7 +9,7 @@
  * 这一页是给人看的，不是给人改的。
  */
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -240,7 +240,40 @@ if (tools.size === 0) {
   console.log('OK 共享时间线')
 }
 
+// ---- 备份 ----
+{
+  const empty = await call('/dsh-whale-memory/backups')
+  assert.equal(empty.status, 200)
+  assert.equal(empty.body.items.length, 0, '一开始没有备份')
+  assert.equal(empty.body.keep >= 1, true)
+
+  const made = await post('/dsh-whale-memory/backups', {})
+  assert.equal(made.body.ok, true, `备份应该成功：${JSON.stringify(made.body)}`)
+  assert.ok(existsSync(made.body.path))
+  assert.ok(statSync(made.body.path).size > 0)
+  assert.ok(made.body.entries >= 1, '备份里应该有记忆条目')
+
+  // 备份本身要能打开、能过完整性检查
+  const copy = new DatabaseSync(made.body.path, { readOnly: true })
+  assert.equal(Object.values(copy.prepare('PRAGMA integrity_check').get())[0], 'ok')
+  assert.ok(copy.prepare('SELECT COUNT(*) c FROM entries').get().c >= 1)
+  copy.close()
+
+  const list = await call('/dsh-whale-memory/backups')
+  assert.ok(list.body.items.length >= 1)
+  assert.ok(list.body.items[0].file.startsWith('memory-'))
+
+  // 手动再备一次：同名会换新文件名，不会覆盖掉上一份
+  const again = await post('/dsh-whale-memory/backups', {})
+  assert.equal(again.body.ok, true)
+  assert.ok(readdirSync(join(dir, 'backups')).length >= 1)
+
+  assert.equal((await call('/dsh-whale-memory/backups', 'DELETE')).status, 405)
+  console.log('OK 备份')
+}
+
 console.log('\n全部通过')
+
 
 
 
