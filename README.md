@@ -54,6 +54,8 @@
 | `lib/prompt.mjs` | 系统提示词两段：纪律（静态）+ 偏好（会变） |
 | `lib/tools.mjs` | 模型可调用的工具 |
 | `lib/routes.mjs` | HTTP 端点 |
+| `lib/recall.mjs` | 记忆注入：相关旧事、事实、最近几轮、日记、群摘要 |
+| `lib/writer.mjs` | 交互落库：热区挤占、冷区合并、硬上限兜底 |
 | `lib/shared.mjs` | 三个包共用的零碎工具（生成文件，别手改） |
 | `client.js` | 浏览器端设置页（手写 bundle，无构建） |
 
