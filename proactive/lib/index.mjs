@@ -271,13 +271,18 @@ export function apply(ctx, config = {}) {
 
     const result = await dshIm.send(botId, targetId, text, { format: 'plain' })
     if (result?.sent === true) {
-      const today = dayKey(now)
-      state.lastSentAt = now.getTime()
-      state.dailyCount[today] = (state.dailyCount[today] ?? 0) + 1
-      state.sentLog.push({ at: now.getTime(), kind, text })
+      const forced = opts.force === true
+      // 手动触发是人在测通道，不该吃掉当天的配额和冷却——
+      // 否则测两次，它就一整天不吭声了。只记一笔日志方便回溯。
+      if (!forced) {
+        const today = dayKey(now)
+        state.lastSentAt = now.getTime()
+        state.dailyCount[today] = (state.dailyCount[today] ?? 0) + 1
+      }
+      state.sentLog.push({ at: now.getTime(), kind, text, forced })
       if (state.sentLog.length > 50) state.sentLog = state.sentLog.slice(-50)
       save()
-      return { sent: true, kind, text }
+      return { sent: true, kind, text, forced }
     }
     return { sent: false, reason: 'send-failed', detail: result }
   }
