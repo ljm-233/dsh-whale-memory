@@ -214,6 +214,22 @@ node group-digest.js --hours 24
 ---
 
 
+## 读网页（绕开本机代理的假 IP）
+
+本机装了代理时，系统 DNS 会给出一堆 `198.18.x.x` 的假地址，`web_fetch` 直接报「resolves to a non-public IP address」。今天试 Steam 页面就这么栽的。
+
+`web_read` 换了个做法：先用公共 DNS（223.5.5.5 / 119.29.29.29）问出真实地址，再用这个地址建立连接、把原域名放回 `Host` 和 TLS SNI 里。对端看不出区别，但不用再经过本机那层假解析。
+
+```
+web_read(url: "https://…", maxChars: 4000)
+```
+
+返回正文纯文本（脚本、样式、标签都拍掉，实体还原）。
+
+**已知限制**：只走 HTTP/1.1。Steam 那类要 HTTP/2 的站点仍会超时——`example.com`、`api.deepseek.com` 之类正常。
+
+---
+
 ## 人格拆成两半
 
 原来的 `PERSONA.md` 什么都装：名字、自称、底线、性格、还顺手规定了该有什么兴趣。后一半是错的——兴趣不该被提前写死，它该从经历里长出来。

@@ -3,7 +3,7 @@
  * 运行：node test-selfcheck.mjs
  */
 import assert from 'node:assert/strict'
-import { buildArchiveDoc, correctEntry, parseJudgement, putEntry, readPolicy, recentEvents, writePolicy, cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, retractEntry, scoreMemory, searchEntries, similarity, splitForIm } from './lib/index.mjs'
+import { buildArchiveDoc, correctEntry, htmlToText, parseJudgement, putEntry, readPolicy, recentEvents, writePolicy, cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, retractEntry, scoreMemory, searchEntries, similarity, splitForIm } from './lib/index.mjs'
 import { DatabaseSync } from 'node:sqlite'
 
 // ---- detectEmotions ----
@@ -322,6 +322,20 @@ import { DatabaseSync } from 'node:sqlite'
   const mine = putEntry(db, { owner: 'me', user: '我自己的事' })
   assert.equal(correctEntry(db, { id: mine.id, text: '改了', actor: 'me' }).ok, true)
   console.log('OK 写边界')
+}
+
+// ---- htmlToText ----
+{
+  const html = '<html><head><style>p{color:red}</style><script>var x=1</script></head>' +
+    '<body><h1>标题</h1><p>一段&nbsp;话 &amp; 符号</p><!-- 注释 --></body></html>'
+  const text = htmlToText(html)
+  assert.ok(!text.includes('color:red'), '样式要丢掉')
+  assert.ok(!text.includes('var x=1'), '脚本要丢掉')
+  assert.ok(text.includes('标题'))
+  assert.ok(text.includes('一段 话 & 符号'), '实体要还原')
+  assert.equal(htmlToText(''), '')
+  assert.equal(htmlToText(null), '')
+  console.log('OK htmlToText')
 }
 
 console.log('\n全部通过')
