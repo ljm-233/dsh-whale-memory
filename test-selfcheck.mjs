@@ -3,7 +3,8 @@
  * 运行：node test-selfcheck.mjs
  */
 import assert from 'node:assert/strict'
-import { buildArchiveDoc, cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, scoreMemory, similarity, splitForIm } from './lib/index.mjs'
+import { buildArchiveDoc, correctEntry, cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, retractEntry, scoreMemory, searchEntries, similarity, splitForIm } from './lib/index.mjs'
+import { DatabaseSync } from 'node:sqlite'
 
 // ---- detectEmotions ----
 {
@@ -163,6 +164,63 @@ import { buildArchiveDoc, cosine, cueWords, detectEmotions, extractFacts, overla
   assert.equal(exact.length, 3)
   assert.doesNotMatch(exact[2], /没发完/, '正好整除时不该提示截断')
   console.log('OK splitForIm')
+}
+
+// ---- 记忆检索与修正 ----
+{
+  const db = new DatabaseSync(':memory:')
+  db.exec(`CREATE TABLE entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, u TEXT NOT NULL, a TEXT NOT NULL,
+    t INTEGER NOT NULL, w REAL NOT NULL DEFAULT 1, emo TEXT NOT NULL DEFAULT '[]',
+    vec BLOB, hot INTEGER NOT NULL DEFAULT 1)`)
+  db.exec(`CREATE TABLE revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, entry_id INTEGER NOT NULL, action TEXT NOT NULL,
+    before_u TEXT NOT NULL, before_a TEXT NOT NULL, after_u TEXT, after_a TEXT,
+    reason TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL)`)
+  const now = Date.now()
+  const ins = db.prepare('INSERT INTO entries(u,a,t,w,emo,hot) VALUES(?,?,?,?,?,?)')
+  ins.run('主人说过喜欢咖啡', '嗯', now - 1000, 5, '["happy"]', 0)
+  ins.run('主人说最近很累', '辛苦了', now, 3, '["tired"]', 1)
+
+  // 检索
+  assert.equal(searchEntries(db, { keyword: '咖啡' }).length, 1)
+  assert.equal(searchEntries(db, { keyword: '主人' }).length, 2)
+  assert.equal(searchEntries(db, { zone: 'hot' }).length, 1)
+  assert.equal(searchEntries(db, { zone: 'cold' })[0].u, '主人说过喜欢咖啡', '冷区按权重排')
+  assert.equal(searchEntries(db, { keyword: '根本没这句' }).length, 0)
+
+  // 修正：旧的进 revisions，主表换成新的
+  const target = searchEntries(db, { keyword: '咖啡' })[0]
+  const fixed = correctEntry(db, {
+    id: target.id, text: '主人说过不喜欢咖啡', assistant: '记错了', reason: '主人纠正过',
+  })
+  assert.equal(fixed.ok, true)
+  assert.equal(fixed.previousId, target.id)
+  assert.notEqual(fixed.id, target.id)
+
+  assert.equal(searchEntries(db, { keyword: '咖啡' }).length, 1)
+  assert.equal(searchEntries(db, { keyword: '咖啡' })[0].u, '主人说过不喜欢咖啡')
+  assert.equal(searchEntries(db, { keyword: '咖啡' })[0].a, '记错了')
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM entries').get().c, 2, '修正不该让条目变多')
+
+  const rev = db.prepare('SELECT action,before_u,after_u,reason FROM revisions').get()
+  assert.equal(rev.action, 'correct')
+  assert.equal(rev.before_u, '主人说过喜欢咖啡', '原件留在修订记录里')
+  assert.equal(rev.after_u, '主人说过不喜欢咖啡')
+  assert.equal(rev.reason, '主人纠正过')
+
+  // 撤回
+  const gone = retractEntry(db, { id: fixed.id, reason: '不该记' })
+  assert.equal(gone.ok, true)
+  assert.equal(searchEntries(db, { keyword: '咖啡' }).length, 0, '撤回后主表里没有它')
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM revisions WHERE action='retract'").get().c, 1)
+
+  // 边界
+  assert.equal(correctEntry(db, { id: 9999, text: 'x' }).ok, false)
+  assert.equal(correctEntry(db, { id: 0, text: 'x' }).reason, 'bad-id')
+  assert.equal(correctEntry(db, { id: target.id, text: '' }).reason, 'not-found', '旧 id 已经不存在')
+  assert.equal(retractEntry(db, { id: 9999 }).reason, 'not-found')
+  console.log('OK 记忆检索与修正')
 }
 
 console.log('\n全部通过')
