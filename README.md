@@ -254,6 +254,25 @@ session.eventAt(seq) 从日志取回原文（压缩只是从上下文移走，�
 
 ---
 
+## 设置面板
+
+装好之后，Web 的 **设置 → 鲸娘记忆** 里可以直接改参数，改完立刻生效——不用重启，也不用碰配置文件。
+
+实现上没另开存储：页面走 DSH 自己的设置服务（`ctx.configForms.get('dsh-whale-memory')`），写入落在活动 profile 的 cordis patch，插件里 `config.xxx.get()` 立刻读到新值。也就是说面板只是配置的一面镜子。
+
+页面上还有一行实时状态：热区/冷区条数、向量服务是否正常、想起过几次、抢救过几次。
+
+两个自检：
+
+```bash
+node test-selfcheck.mjs   # Host 半部的纯函数
+node test-client.mjs      # 设置页（模拟客户端模块运行时，SSR 出 HTML 来断言）
+```
+
+`test-client.mjs` 需要 react，仓库本身不带依赖；找不到会跳过，装了 DSH 的环境里才有。
+
+---
+
 ## 配置
 
 | 常量 | 默认 | 含义 |
@@ -281,6 +300,9 @@ session.eventAt(seq) 从日志取回原文（压缩只是从上下文移走，�
       botId: qq_xxxxxxxx      # 不填就自动找
       targetId: tgt_xxxxxxxx  # 不填就自动找单聊目标
 ```
+
+上表是**默认值**。这些参数在设置面板里都能改，改了不用重启。
+`memoryPath` 和 `archive.dir` 例外——路径是启动时读的，改了要重启。
 
 环境变量：
 
