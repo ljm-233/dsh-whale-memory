@@ -18,6 +18,15 @@ import { mkdirSync, appendFileSync, existsSync, readFileSync, writeFileSync, ren
 import { homedir } from 'node:os'
 import { join, resolve, isAbsolute } from 'node:path'
 
+/**
+ * 模型侧工具工厂。DSH 自带，拿不到就退化成只有 HTTP 端点——
+ * 插件照旧跑，只是模型没法自己调。
+ */
+let defineTool = null
+try {
+  ;({ defineTool } = await import('@deepseek-ai/dsh-tools'))
+} catch { /* 没有 dsh-tools 就不注册工具 */ }
+
 const DEFAULT_DIR = join(homedir(), '.dsh', 'group-corpus')
 const DB_FILE = 'corpus.db'
 const JSONL_FILE = 'messages.jsonl'
@@ -216,6 +225,104 @@ export function renderStyleHint(style, exemplars = []) {
  * @param {import('@deepseek-ai/cordis').Context} ctx
  * @param {object} config
  */
+/**
+ * 按条件翻群档。只读。
+ *
+ * @param {DatabaseSync} db 语料库
+ * @param {object} opts
+ * @param {string} [opts.keyword] 正文关键词
+ * @param {string} [opts.sender] 发言人名字片段
+ * @param {'any'|'human'|'ai'} [opts.kind] 只看真人或只看 AI
+ * @param {number} [opts.sinceDays] 最近几天
+ * @param {number} [opts.since] 起始时间（毫秒时间戳）
+ * @param {number} [opts.until] 截止时间（毫秒时间戳）
+ * @param {'asc'|'desc'} [opts.order] 时间顺序，默认新到旧
+ * @param {number} [opts.limit] 最多几条，1–200，默认 30
+ * @returns {{total:number, shown:number, messages:Array<{at:number,sender:string,kind:string,text:string}>}}
+ */
+export function searchMessages(db, opts = {}) {
+  const where = []
+  const args = []
+
+  const kind = opts.kind ?? 'any'
+  if (kind === 'human' || kind === 'ai') {
+    where.push('kind = ?')
+    args.push(kind)
+  }
+
+  const keyword = String(opts.keyword ?? '').trim()
+  if (keyword !== '') {
+    where.push('text LIKE ?')
+    args.push(`%${keyword}%`)
+  }
+
+  const sender = String(opts.sender ?? '').trim()
+  if (sender !== '') {
+    where.push('sender_name LIKE ?')
+    args.push(`%${sender}%`)
+  }
+
+  const days = Number(opts.sinceDays)
+  if (Number.isFinite(days) && days > 0) {
+    where.push('sent_at >= ?')
+    args.push(Date.now() - days * 86_400_000)
+  }
+
+  for (const key of ['since', 'until']) {
+    const value = Number(opts[key])
+    if (!Number.isFinite(value) || value <= 0) continue
+    where.push(`sent_at ${key === 'since' ? '>=' : '<='} ?`)
+    args.push(value)
+  }
+
+  const clause = where.length === 0 ? '' : `WHERE ${where.join(' AND ')}`
+  const limit = Math.min(200, Math.max(1, Number(opts.limit) || 30))
+  const descending = (opts.order ?? 'desc') !== 'asc'
+
+  const total = db.prepare(`SELECT COUNT(*) c FROM messages ${clause}`).get(...args).c
+  const rows = db.prepare(
+    `SELECT sender_name, kind, text, sent_at FROM messages ${clause}
+     ORDER BY sent_at ${descending ? 'DESC' : 'ASC'} LIMIT ?`,
+  ).all(...args, limit)
+
+  return {
+    total,
+    shown: rows.length,
+    messages: rows.map((r) => ({
+      at: r.sent_at,
+      sender: String(r.sender_name ?? ''),
+      kind: String(r.kind ?? ''),
+      text: String(r.text ?? '').slice(0, 500),
+    })),
+  }
+}
+
+/**
+ * 群档的整体概况：时间跨度、每天多少条、谁说了多少。
+ *
+ * @param {DatabaseSync} db 语料库
+ * @returns {object}
+ */
+export function corpusStats(db) {
+  const span = db.prepare('SELECT MIN(sent_at) a, MAX(sent_at) b, COUNT(*) n FROM messages').get()
+  const byDay = db.prepare(`
+    SELECT strftime('%Y-%m-%d', sent_at / 1000, 'unixepoch', 'localtime') d, COUNT(*) c
+    FROM messages GROUP BY d ORDER BY d
+  `).all()
+  const bySender = db.prepare(`
+    SELECT sender_name, kind, COUNT(*) c FROM messages
+    GROUP BY sender_name, kind ORDER BY c DESC LIMIT 20
+  `).all()
+
+  return {
+    total: span.n,
+    firstAt: span.a,
+    lastAt: span.b,
+    byDay: byDay.map((r) => ({ day: r.d, count: r.c })),
+    bySender: bySender.map((r) => ({ name: r.sender_name, kind: r.kind, count: r.c })),
+  }
+}
+
 export function apply(ctx, config = {}) {
   const dir = (() => {
     const raw = String(config.corpusPath ?? '').trim()
@@ -423,13 +530,145 @@ export function apply(ctx, config = {}) {
           res.end(JSON.stringify({ ok: true, style }))
         },
       }),
+      webCtx.webServer.register({
+        kind: 'exact',
+        path: '/dsh-group-corpus/history',
+        handler: (req, res) => {
+          if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }).end(); return }
+          const url = new URL(req.url ?? '/', 'http://dsh.invalid')
+          const param = (k) => url.searchParams.get(k)
+          const sinceDays = Number(param('sinceDays'))
+          const result = searchMessages(db, {
+            keyword: param('keyword') ?? '',
+            sender: param('sender') ?? '',
+            kind: param('kind') ?? 'any',
+            sinceDays: Number.isFinite(sinceDays) ? sinceDays : undefined,
+            limit: param('limit'),
+            order: param('order') ?? 'desc',
+          })
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+          res.end(JSON.stringify({
+            ...result,
+            messages: result.messages.map((m) => ({ ...m, day: localStamp(m.at) })),
+            ...(param('stats') === '1' ? { stats: corpusStats(db) } : {}),
+          }))
+        },
+      }),
     ], 'dsh-group-corpus: routes')
   })
 
   // 启动时若有数据，先算一次
   setTimeout(() => { try { rebuildStyle() } catch { /* 忽略 */ } }, 5000)
 
+  // 模型可调用的只读工具：让「自己翻群档」成为正经能力
+  registerHistoryTool(ctx, db)
+
   ctx.effect(() => () => { try { db.close() } catch { /* 忽略 */ } }, 'dsh-group-corpus: close')
 }
 
 export const name = 'dsh-group-corpus'
+
+/**
+ * 注册模型可调用的只读工具 `group_history`。
+ *
+ * 有了它，「自己翻群档」就是正经能力，不是拿 bash 去 open 那个 sqlite。
+ * 只读：没有任何写路径。
+ */
+function registerHistoryTool(ctx, db) {
+  if (defineTool === null) return
+  ctx.inject(['tools'], (toolsCtx) => {
+    toolsCtx.effect(() => toolsCtx.tools.register(defineTool({
+      name: 'group_history',
+      description: 'Read the archived QQ group history. Use it to recall what was said earlier, who said it, or to check whether a topic came up before. Read-only.',
+      parameters: {
+        keyword: {
+          type: 'string',
+          description: 'Only messages whose text contains this substring.',
+        },
+        sender: {
+          type: 'string',
+          description: 'Only messages whose sender name contains this substring.',
+        },
+        kind: {
+          type: 'string',
+          enum: ['any', 'human', 'ai'],
+          description: 'Restrict to human messages, AI messages, or both. Defaults to any.',
+        },
+        sinceDays: {
+          type: 'number',
+          description: 'Only messages from the last N days.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum messages to return, 1-200. Defaults to 30.',
+        },
+        order: {
+          type: 'string',
+          enum: ['desc', 'asc'],
+          description: 'Newest first (desc, default) or oldest first (asc).',
+        },
+        stats: {
+          type: 'boolean',
+          description: 'Also return the corpus overview: time span, per-day counts, top senders.',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            total: { type: 'number', required: true, description: 'Matching messages in the archive.' },
+            shown: { type: 'number', required: true, description: 'Messages returned in this response.' },
+            messages: {
+              type: 'array',
+              required: true,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  at: { type: 'number', required: true, description: 'Unix milliseconds.' },
+                  day: { type: 'string', required: true, description: 'Local YYYY-MM-DD HH:mm.' },
+                  sender: { type: 'string', required: true },
+                  kind: { type: 'string', required: true, description: 'human or ai.' },
+                  text: { type: 'string', required: true },
+                },
+              },
+            },
+            stats: { type: 'object', additionalProperties: true },
+          },
+        },
+        render: (_args, value) => [{
+          type: 'text',
+          text: value.messages.length === 0
+            ? `没有匹配的消息（库里有 ${value.total} 条符合条件）。`
+            : [`共 ${value.total} 条匹配，返回 ${value.shown} 条：`, ...value.messages.map(
+              (m) => `[${m.day}] ${m.sender}(${m.kind}): ${m.text}`,
+            )].join('\n'),
+        }],
+      },
+      execute(args) {
+        const result = searchMessages(db, args)
+        const out = {
+          total: result.total,
+          shown: result.shown,
+          messages: result.messages.map((m) => ({
+            at: m.at,
+            day: localStamp(m.at),
+            sender: m.sender,
+            kind: m.kind,
+            text: m.text,
+          })),
+        }
+        if (args.stats === true) out.stats = corpusStats(db)
+        return out
+      },
+    })), 'dsh-group-corpus: history tool')
+  })
+}
+
+/** 本地时区的 YYYY-MM-DD HH:mm。 */
+function localStamp(ms) {
+  const d = new Date(ms)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}

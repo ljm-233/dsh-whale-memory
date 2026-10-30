@@ -143,3 +143,30 @@ node test-selfcheck.mjs
 ## 许可证
 
 MIT
+
+## 让模型自己翻群档
+
+插件注册了一个只读工具 `group_history`。装了 DSH 的环境里，模型可以直接调它翻档，不用再拿 bash 去开那个 sqlite：
+
+```
+keyword    正文包含这个片段
+sender     发言人名字包含这个片段
+kind       any / human / ai
+sinceDays  只看最近 N 天
+limit      最多几条，1–200，默认 30
+order      desc（新到旧，默认）/ asc
+stats      顺便带概况：时间跨度、每天多少条、谁说得最多
+```
+
+返回每条带一个 `day`（本地 `YYYY-MM-DD HH:mm`），模型不用自己算时间。
+
+同样内容的 HTTP 端点，方便核对：
+
+```bash
+curl 'http://127.0.0.1:3080/dsh-group-corpus/history?keyword=记忆&limit=5'
+curl 'http://127.0.0.1:3080/dsh-group-corpus/history?stats=1'
+```
+
+**只读。**端点只接受 GET，其他动词 405；工具本身没有任何写路径。
+
+`@deepseek-ai/dsh-tools` 拿不到时（比如在仓库里直接跑），工具不注册，插件照旧工作。

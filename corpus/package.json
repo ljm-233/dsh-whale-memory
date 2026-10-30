@@ -10,11 +10,21 @@
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
-  "files": ["lib", "cordis.patch.yml"],
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
   "scripts": {
-    "check": "node --check lib/index.mjs && node test-selfcheck.mjs"
+    "check": "node --check lib/index.mjs && node test-selfcheck.mjs && node test-tool.mjs",
+    "test": "node test-selfcheck.mjs && node test-tool.mjs"
   },
-  "keywords": ["dsh-plugin", "deepseek-harness", "corpus", "style", "learning"],
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "corpus",
+    "style",
+    "learning"
+  ],
   "license": "MIT",
   "dsh": {
     "bundle": {

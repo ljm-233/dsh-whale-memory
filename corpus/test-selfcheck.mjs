@@ -3,7 +3,8 @@
  * 运行：node test-selfcheck.mjs
  */
 import assert from 'node:assert/strict'
-import { analyzeStyle, classifySender, cleanText, renderStyleHint } from './lib/index.mjs'
+import { DatabaseSync } from 'node:sqlite'
+import { analyzeStyle, classifySender, cleanText, corpusStats, renderStyleHint, searchMessages } from './lib/index.mjs'
 import { judgeExemplar } from './exemplars.js'
 
 const cfg = {
@@ -130,6 +131,62 @@ const cfg = {
   const noEx = renderStyleHint(style, [])
   assert.ok(!noEx.includes('群里真人说话的实例'), '没范例时不该有这一段')
   console.log('OK 范例注入')
+}
+
+// ---- searchMessages / corpusStats：群档只读查询 ----
+{
+  const db = new DatabaseSync(':memory:')
+  db.exec(`CREATE TABLE messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, platform_id TEXT, sender_id TEXT NOT NULL,
+    sender_name TEXT, kind TEXT NOT NULL, score INTEGER, reasons TEXT, text TEXT,
+    sent_at INTEGER NOT NULL, ingested_at INTEGER NOT NULL)`)
+  const ins = db.prepare('INSERT INTO messages(platform_id,sender_id,sender_name,kind,text,sent_at,ingested_at) VALUES(?,?,?,?,?,?,?)')
+  const now = Date.now()
+  const old = now - 10 * 86_400_000
+  ins.run('a', 'u1', 'ljm_QvQ', 'human', '第一次跑 pwd', old, now)
+  ins.run('b', 'u2', '辛会', 'human', '怎么又不回答了', old + 60_000, now)
+  ins.run('c', 'u3', 'Miyu', 'ai', '这是模型回的话', old + 120_000, now)
+  ins.run('d', 'u1', 'ljm_QvQ', 'human', '今天又提到 pwd 了', now, now)
+
+  // 默认：新到旧，最多 30
+  const all = searchMessages(db)
+  assert.equal(all.total, 4)
+  assert.equal(all.shown, 4)
+  assert.equal(all.messages[0].text, '今天又提到 pwd 了', '默认新到旧')
+
+  // 关键词
+  const kw = searchMessages(db, { keyword: 'pwd' })
+  assert.equal(kw.total, 2)
+  assert.equal(kw.messages[1].text, '第一次跑 pwd', '倒序时旧的在后面')
+
+  // 只看真人 / 只看 AI
+  assert.equal(searchMessages(db, { kind: 'human' }).total, 3)
+  assert.equal(searchMessages(db, { kind: 'ai' }).total, 1)
+  assert.equal(searchMessages(db, { kind: 'ai' }).messages[0].sender, 'Miyu')
+
+  // 按发言人
+  assert.equal(searchMessages(db, { sender: '辛' }).total, 1)
+
+  // 时间窗
+  assert.equal(searchMessages(db, { sinceDays: 1 }).total, 1, '一天内只有最新那条')
+
+  // 顺序 + 条数上限
+  const asc = searchMessages(db, { order: 'asc', limit: 2 })
+  assert.equal(asc.total, 4, 'total 是匹配总数，不受 limit 影响')
+  assert.equal(asc.shown, 2)
+  assert.equal(asc.messages[0].text, '第一次跑 pwd')
+
+  // limit 越界兜底
+  assert.equal(searchMessages(db, { limit: 9999 }).shown, 4)
+  assert.equal(searchMessages(db, { limit: 0 }).shown, 4, 'limit 给 0 也按默认值走')
+
+  // 概况
+  const stats = corpusStats(db)
+  assert.equal(stats.total, 4)
+  assert.equal(stats.byDay.length, 2, '两天的数据')
+  assert.equal(stats.bySender[0].name, 'ljm_QvQ', '说得最多的人排最前')
+  assert.equal(stats.bySender[0].count, 2)
+  console.log('OK searchMessages / corpusStats')
 }
 
 console.log('\n全部通过')
