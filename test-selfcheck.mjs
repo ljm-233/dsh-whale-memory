@@ -3,7 +3,7 @@
  * 运行：node test-selfcheck.mjs
  */
 import assert from 'node:assert/strict'
-import { cosine, cueWords, detectEmotions, extractFacts, overlap, scoreMemory, similarity } from './lib/index.mjs'
+import { cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, scoreMemory, similarity } from './lib/index.mjs'
 
 // ---- detectEmotions ----
 {
@@ -90,6 +90,42 @@ import { cosine, cueWords, detectEmotions, extractFacts, overlap, scoreMemory, s
   const sFar = scoreMemory(far, { emotions: [], text: '', cues: [], queryVec: q, now })
   assert.ok(sNear > sFar, `近邻向量(${sNear}) 应高于正交向量(${sFar})`)
   console.log('OK scoreMemory(vector)')
+}
+
+// ---- pairShadowed：压缩前抢救的配对逻辑 ----
+{
+  const mkUser = (t, kind = 'user') => ({
+    type: 'user/message',
+    data: { source: { kind }, content: [{ type: 'text', text: t }] },
+  })
+  const mkAssistant = (t) => ({
+    type: 'assistant/message',
+    data: { message: { content: [{ type: 'text', text: t }] } },
+  })
+
+  const evs = {
+    1: mkUser('运行时上下文快照', 'runtime-context'),   // 注入，应跳过
+    2: mkUser('帮我建个仓库'),
+    3: mkAssistant('好，我先看看'),
+    4: mkUser('第二个问题'),
+    5: mkAssistant('第二个回答'),
+    6: { type: 'tool/result', data: {} },              // 工具结果，应跳过
+  }
+  const pairs = pairShadowed((s) => evs[s], [1, 2, 3, 4, 5, 6])
+  assert.equal(pairs.length, 2, `应配出 2 对，实际 ${pairs.length}`)
+  assert.equal(pairs[0].u, '帮我建个仓库')
+  assert.equal(pairs[0].a, '好，我先看看')
+  assert.equal(pairs[1].a, '第二个回答')
+
+  // 只有用户没助手回复的情况
+  const onlyUser = pairShadowed((s) => ({ 1: mkUser('孤独的一句') })[s], [1])
+  assert.equal(onlyUser.length, 1)
+  assert.equal(onlyUser[0].a, '', '无回复时应为空串')
+
+  // 空输入
+  assert.deepEqual(pairShadowed(() => undefined, []), [])
+  assert.deepEqual(pairShadowed(() => undefined, [99]), [], '取不到事件应返回空')
+  console.log('OK pairShadowed')
 }
 
 console.log('\n全部通过')
