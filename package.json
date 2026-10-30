@@ -19,7 +19,8 @@
     "embed_server.py",
     "README.md",
     "INSTALL.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "scripts"
   ],
   "scripts": {
     "check": "node --check lib/index.mjs && node --check client.js && node test-selfcheck.mjs && node test-routes.mjs && node test-client.mjs",

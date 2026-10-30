@@ -59,13 +59,71 @@ curl -s http://127.0.0.1:3080/dsh-whale-memory/status
 
 再打开 Web 设置，左侧应该多一页「鲸娘记忆」，能看到四组参数和只读的记忆内容预览。
 
-## 五、装完会怎样
+## 五、Windows 11 上装
+
+代码本身没有只跑在 Linux 的地方（没有 `/tmp`、没有 `HOME` 环境变量、没有 shell 调用），但**服务怎么起**要换成 Windows 的写法。
+
+### 前置
+
+```powershell
+node -e "require('node:sqlite'); console.log(process.version)"
+```
+
+Node 24 及以上默认可用；22.5–23 需要启动参数 `--experimental-sqlite`（在 `NODE_OPTIONS` 里加上）。
+
+### 安装
+
+```powershell
+git clone https://github.com/ljm-233/dsh-whale-memory.git
+cd dsh-whale-memory
+dsh plugin --profile web add $PWD.Path
+dsh plugin --profile web add "$($PWD.Path)\corpus"
+dsh plugin --profile web add "$($PWD.Path)\proactive"
+```
+
+装完重启 dsh。
+
+### 向量服务
+
+```powershell
+# 一次性装依赖
+uv pip install --target "$env:USERPROFILE\.dsh-whale\pylibs" onnxruntime numpy
+
+# 起服务
+.\scripts\run-embed.ps1
+
+# 验
+curl.exe http://127.0.0.1:8377/health
+```
+
+模型目录（`embed_server.py` 里的 `MODEL_DIR`）在 Windows 上要改成实际路径，比如 `C:\models\bge-small-zh-v1.5-int8\`。
+
+### 开机自启 / 定时任务
+
+Linux 那套 systemd 用不上，换成任务计划程序：
+
+```powershell
+# 向量服务：登录时启动
+schtasks /create /tn "dsh-whale-embed" /tr "powershell -NoProfile -File %USERPROFILE%\dsh-whale-memory\scripts\run-embed.ps1" /sc onlogon
+
+# 胡思乱想：每两小时跑一次
+schtasks /create /tn "dsh-whale-ruminate" /tr "node %USERPROFILE%\dsh-whale-memory\ruminate.js --count 1" /sc hourly /mo 2
+```
+
+### Windows 上已知的差异
+
+- 备份用的是 `VACUUM INTO`，路径已统一成正斜杠，Windows 反斜杠路径也试过没问题
+- 文件轮转按文件名匹配，不依赖路径分隔符
+- 没有做「Windows 服务」形态，只有任务计划程序——关掉终端服务就停
+- 路径里有中文或空格时，`dsh plugin add` 可能需要给路径加引号
+
+## 六、装完会怎样
 
 它开始有自己的记忆：热区放最近几轮，冷区放长期，被压缩掉的对话会抢救回来，每天自己写一篇日记，跨窗口写同一条事件线。
 
 **记忆是它自己的**，存在它那台机器的 `~/.dsh/whale-memory/` 里，不跟别人的混。
 
-## 六、已知差异
+## 七、已知差异
 
 - 没有向量服务 → 召回降级，但不会崩
 - 没有 `@deepseek-ai/dsh-tools` → 工具不注册（记忆照常工作，只是模型不能自己查/改）
