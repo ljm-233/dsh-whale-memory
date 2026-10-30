@@ -148,4 +148,32 @@ const baseState = { lastSentAt: 0, lastUserMessageAt: 0, dailyCount: {} }
   console.log('OK pickFollowUp')
 }
 
+// ---- 门槛可配置 ----
+{
+  const noon = at(12)
+  const fresh = { lastSentAt: 0, lastUserMessageAt: 0, dailyCount: {} }
+
+  // 免打扰时段能改
+  assert.equal(isQuietHours(at(3)), true, '默认 3 点属于免打扰')
+  assert.equal(isQuietHours(at(3), { quietStart: 1, quietEnd: 5 }), true)
+  assert.equal(isQuietHours(at(12), { quietStart: 1, quietEnd: 5 }), false)
+  assert.equal(isQuietHours(at(9), { quietStart: 23, quietEnd: 8 }), false)
+  assert.equal(isQuietHours(at(12), { quietStart: 0, quietEnd: 0 }), false, '起止相同表示不启用')
+
+  // 每日上限能改
+  const sent2 = { ...fresh, dailyCount: { [dayKey(noon)]: 2 } }
+  assert.equal(shouldSend(sent2, noon, { dailyCap: 2 }).reason, 'daily-cap')
+  assert.equal(shouldSend(sent2, noon, { dailyCap: 5 }).send, true, '上限调到 5 就该能发')
+
+  // 冷却和沉默时长能改
+  const recent = { ...fresh, lastSentAt: noon.getTime() - 2 * 3_600_000 }
+  assert.equal(shouldSend(recent, noon, {}).reason, 'cooldown', '默认 6 小时冷却')
+  assert.equal(shouldSend(recent, noon, { cooldownMs: 1 * 3_600_000 }).send, true, '冷却改成 1 小时就放行')
+
+  const spoke = { ...fresh, lastUserMessageAt: noon.getTime() - 2 * 3_600_000 }
+  assert.equal(shouldSend(spoke, noon, {}).reason, 'user-active')
+  assert.equal(shouldSend(spoke, noon, { silenceMs: 1 * 3_600_000 }).send, true, '沉默门槛改成 1 小时就放行')
+  console.log('OK 门槛可配置')
+}
+
 console.log('\n全部通过')

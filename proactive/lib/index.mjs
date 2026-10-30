@@ -63,11 +63,14 @@ const TEMPLATES = {
  * @param {Date} at
  * @returns {boolean}
  */
-export function isQuietHours(at) {
+export function isQuietHours(at, cfg = {}) {
+  const start = cfg.quietStart ?? QUIET_START
+  const end = cfg.quietEnd ?? QUIET_END
   const h = at.getHours()
-  if (QUIET_START <= QUIET_END) return h >= QUIET_START && h < QUIET_END
-  // 跨午夜：23 点到次日 8 点
-  return h >= QUIET_START || h < QUIET_END
+  if (start === end) return false
+  if (start < end) return h >= start && h < end
+  // 跨午夜：比如 23 点到次日 8 点
+  return h >= start || h < end
 }
 
 /**
@@ -81,7 +84,7 @@ export function isQuietHours(at) {
  * @returns {{send: boolean, reason: string, kind?: string}}
  */
 export function shouldSend(state, now, cfg = {}) {
-  const quiet = isQuietHours(now)
+  const quiet = isQuietHours(now, cfg)
   if (quiet) return { send: false, reason: 'quiet-hours' }
 
   const cooldown = cfg.cooldownMs ?? COOLDOWN_MS
@@ -186,6 +189,19 @@ export function composeMessage(kind, memo) {
  * @param {object} config
  */
 export function apply(ctx, config = {}) {
+  /** 读一项配置：声明了 .volatile() 的字段是活引用，每次都要 .get()。 */
+  const cfgVal = (v, fallback) => (v && typeof v.get === 'function' ? (v.get() ?? fallback) : (v ?? fallback))
+
+  /** 四个门槛 + 检查频率，全部可热改。 */
+  const limits = () => ({
+    dailyCap: cfgVal(config.dailyCap, DAILY_CAP),
+    cooldownMs: cfgVal(config.cooldownHours, COOLDOWN_MS / 3_600_000) * 3_600_000,
+    silenceMs: cfgVal(config.silenceHours, SILENCE_MS / 3_600_000) * 3_600_000,
+    quietStart: cfgVal(config.quietStart, QUIET_START),
+    quietEnd: cfgVal(config.quietEnd, QUIET_END),
+  })
+  const tickMs = () => Math.max(60_000, cfgVal(config.tickMinutes, TICK_MS / 60_000) * 60_000)
+
   const dir = (() => {
     const raw = String(config.statePath ?? '').trim()
     if (raw === '') return DEFAULT_DIR
@@ -246,7 +262,7 @@ export function apply(ctx, config = {}) {
     }
 
     const now = new Date()
-    const decision = decide(opts, state, now, config)
+    const decision = decide(opts, state, now, limits())
     if (!decision.send) return { sent: false, reason: decision.reason }
 
     // 找素材
@@ -287,10 +303,17 @@ export function apply(ctx, config = {}) {
     return { sent: false, reason: 'send-failed', detail: result }
   }
 
-  // 定时检查
+  // 定时检查。
+  //
+  // 外层固定一分钟醒一次，但只有距上次检查超过 tickMinutes 才真去判断——
+  // 这样「多久看一次」也成了可热改的设置，不用为它重启。
+  let lastTickAt = 0
   const timer = setInterval(() => {
+    const now = Date.now()
+    if (now - lastTickAt < tickMs()) return
+    lastTickAt = now
     trySend().catch(() => undefined)
-  }, TICK_MS)
+  }, 60_000)
   timer.unref?.()
 
   // ---- 端点：状态与手动触发 ----
@@ -301,14 +324,16 @@ export function apply(ctx, config = {}) {
         path: '/dsh-proactive-message/status',
         handler: (req, res) => {
           const now = new Date()
-          const decision = shouldSend(state, now, config)
+          const decision = shouldSend(state, now, limits())
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
           res.end(JSON.stringify({
             botId: botId || null,
             targetId: targetId || null,
             ready: dshIm !== null && botId !== '' && targetId !== '',
             now: now.toISOString(),
-            isQuietHours: isQuietHours(now),
+            limits: limits(),
+            tickMinutes: tickMs() / 60_000,
+            isQuietHours: isQuietHours(now, limits()),
             decision,
             state: {
               lastSentAt: state.lastSentAt || null,
@@ -345,3 +370,35 @@ export function apply(ctx, config = {}) {
 }
 
 export const name = 'dsh-proactive-message'
+
+/**
+ * 配置 schema —— 设置页靠它生成表单。
+ *
+ * 带 `.volatile()` 的字段改完立刻生效；`statePath` 是启动时读的，改了要重启。
+ */
+let z = null
+try {
+  ;({ default: z } = await import('@deepseek-ai/schemastery'))
+} catch { /* 没有 schemastery 就退化成无 schema */ }
+
+export const Config = z === null ? undefined : z.object({
+  /** 用哪个机器人发。 */
+  botId: z.string().default(''),
+  /** 发到哪（群或单聊的目标 id）。 */
+  targetId: z.string().default(''),
+  /** 状态文件目录，留空用 ~/.dsh/proactive-message。改了要重启。 */
+  statePath: z.string().default(''),
+
+  /** 每天最多主动发几条。 */
+  dailyCap: z.natural().min(0).max(20).default(DAILY_CAP).volatile(),
+  /** 两次主动消息至少隔几小时。 */
+  cooldownHours: z.number().min(0).max(72).default(COOLDOWN_MS / 3_600_000).volatile(),
+  /** 主人多久没说话才算「安静」，单位小时。 */
+  silenceHours: z.number().min(1).max(72).default(SILENCE_MS / 3_600_000).volatile(),
+  /** 免打扰开始时间（0–23 点）。等于结束时间表示不启用。 */
+  quietStart: z.natural().min(0).max(23).default(QUIET_START).volatile(),
+  /** 免打扰结束时间（0–23 点）。 */
+  quietEnd: z.natural().min(0).max(23).default(QUIET_END).volatile(),
+  /** 多久检查一次，单位分钟。 */
+  tickMinutes: z.natural().min(1).max(720).default(TICK_MS / 60_000).volatile(),
+})

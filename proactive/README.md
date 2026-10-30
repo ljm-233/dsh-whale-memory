@@ -45,6 +45,31 @@ const result = await ctx.dshIm.send(botId, targetId, text, { format: 'plain' })
 
 `targetId` **必须先在设置页手动创建**——这是设计如此，防止插件乱发消息。
 
+### 四个门槛都能改
+
+装上以后，Web 的 **设置 → 主动消息** 里可以直接改，改完立刻生效：
+
+| 设置 | 默认 | 含义 |
+|---|---|---|
+| `dailyCap` | 2 | 每天最多主动发几条 |
+| `cooldownHours` | 6 | 两次之间至少隔几小时 |
+| `silenceHours` | 8 | 多久没说话才算「安静」 |
+| `quietStart` / `quietEnd` | 23 / 8 | 免打扰时段；两个填一样就是不启用 |
+| `tickMinutes` | 30 | 多久检查一次该不该说话 |
+
+也可以直接写配置，效果一样：
+
+```yaml
+- id: dsh-proactive-message
+  config:
+    dailyCap: 3
+    cooldownHours: 4
+    quietStart: 0
+    quietEnd: 0      # 关掉免打扰
+```
+
+这些是 `volatile` 字段，改完不用重启。`statePath` 例外——它是启动时读的。
+
 ### 创建投递目标
 
 1. 打开「设置 → IM机器人」
@@ -64,6 +89,11 @@ curl http://127.0.0.1:3080/dsh-proactive-message/status
 
 # 立即检查一次（仍受所有闸的限制）
 curl -X POST http://127.0.0.1:3080/dsh-proactive-message/send
+
+# 手动发一条：跳过全部门槛，不占当天配额
+curl -X POST -H 'content-type: application/json' \
+     -d '{"text":"我说句话试试"}' \
+     http://127.0.0.1:3080/dsh-proactive-message/send
 ```
 
 `status` 返回判定明细，便于调试为什么没发：
@@ -86,10 +116,12 @@ curl -X POST http://127.0.0.1:3080/dsh-proactive-message/send
 ## 自检
 
 ```bash
-node test-selfcheck.mjs
+node test-selfcheck.mjs   # 判定逻辑（纯函数）
+node test-client.mjs      # 设置页（模拟客户端运行时，SSR 出 HTML）
 ```
 
-六个用例，重点测「不该发」：静默时段、冷却期、用户活跃、配额用完，以及优先级顺序。
+用例重点测「不该发」：静默时段、冷却期、用户活跃、配额用完，以及优先级顺序；
+另外覆盖门槛可配置、手动触发、以及归档条目不能被当成跟进素材。
 
 ## 已知限制
 
