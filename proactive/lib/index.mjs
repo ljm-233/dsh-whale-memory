@@ -140,6 +140,36 @@ function clampText(text, n) {
   return t.length <= n ? t : `${t.slice(0, n - 1)}…`
 }
 
+/** 主动搭话：默认一天两次，间隔至少三小时。 */
+const INITIATIVE_CAP = 2
+const INITIATIVE_GAP_MS = 3 * 60 * 60 * 1000
+
+/**
+ * 现在能不能主动搭一次话。
+ *
+ * 这是唯一能越过「主人刚说过话」那条门槛的口子——但只越这一条。
+ * 免打扰、日配额、冷却照旧，另外还有自己的限额和间隔，免得不分场合地刷。
+ *
+ * @param {object} config 配置
+ * @param {object} state 状态
+ * @param {Date} now 当前时间
+ * @returns {{allow:boolean, reason?:string}}
+ */
+export function allowsInitiative(config, state, now) {
+  const cfg = config?.initiative
+  if (!cfg || cfg.enabled !== true) return { allow: false, reason: 'initiative-off' }
+
+  const cap = Number(cfg.dailyCap) > 0 ? Number(cfg.dailyCap) : INITIATIVE_CAP
+  const used = Number(state?.initiativeCount?.[dayKey(now)]) || 0
+  if (used >= cap) return { allow: false, reason: 'initiative-cap' }
+
+  const gapMs = Number(cfg.minGapHours) > 0 ? Number(cfg.minGapHours) * 3_600_000 : INITIATIVE_GAP_MS
+  const last = Number(state?.lastInitiativeAt) || 0
+  if (last > 0 && now.getTime() - last < gapMs) return { allow: false, reason: 'initiative-gap' }
+
+  return { allow: true }
+}
+
 /** 自己醒来干活，一天最多几次。 */
 const SELF_WAKE_CAP = 3
 
@@ -277,7 +307,13 @@ export function decide(opts, state, now, config, context = {}) {
     return { send: true, reason: 'forced', kind: opts.kind ?? 'silence' }
   }
   const gate = shouldSend(state, now, config)
-  if (!gate.send) return gate
+  if (!gate.send) {
+    // 只有「主人刚说过话」这一条能被主动搭话越过——不是所有门槛。
+    if (gate.reason === 'user-active' && allowsInitiative(config, state, now).allow) {
+      return { send: true, reason: 'initiative', kind: 'silence' }
+    }
+    return gate
+  }
 
   // 有没做完的事，优先推进它——这比「沉默太久打个招呼」有意义。
   if (context.task) return { send: true, reason: 'pending-work', kind: 'followUp' }
@@ -321,6 +357,16 @@ export function apply(ctx, config = {}) {
   })
   const tickMs = () => Math.max(60_000, cfgVal(config.tickMinutes, TICK_MS / 60_000) * 60_000)
 
+  /** 主动搭话的配置（活引用要现读，所以单独归一化一份）。 */
+  const initiativeCfg = () => {
+    const raw = config.initiative && typeof config.initiative === 'object' ? config.initiative : {}
+    return {
+      enabled: cfgVal(raw.enabled, false) === true,
+      dailyCap: cfgVal(raw.dailyCap, INITIATIVE_CAP),
+      minGapHours: cfgVal(raw.minGapHours, INITIATIVE_GAP_MS / 3_600_000),
+    }
+  }
+
   const dir = (() => {
     const raw = String(config.statePath ?? '').trim()
     if (raw === '') return DEFAULT_DIR
@@ -350,7 +396,7 @@ export function apply(ctx, config = {}) {
   loadTasks()
 
   /** @type {{lastSentAt:number, lastUserMessageAt:number, dailyCount:Record<string,number>, sentLog:Array, awakeCount:Record<string,number>}} */
-  let state = { lastSentAt: 0, lastUserMessageAt: 0, dailyCount: {}, sentLog: [], awakeCount: {} }
+  let state = { lastSentAt: 0, lastUserMessageAt: 0, dailyCount: {}, sentLog: [], awakeCount: {}, initiativeCount: {}, lastInitiativeAt: 0 }
 
   const load = () => {
     try {
@@ -361,6 +407,8 @@ export function apply(ctx, config = {}) {
           lastUserMessageAt: raw.lastUserMessageAt ?? 0,
           dailyCount: raw.dailyCount ?? {},
           awakeCount: raw.awakeCount ?? {},
+          initiativeCount: raw.initiativeCount ?? {},
+          lastInitiativeAt: raw.lastInitiativeAt ?? 0,
           sentLog: Array.isArray(raw.sentLog) ? raw.sentLog.slice(-50) : [],
         }
       }
@@ -454,7 +502,7 @@ export function apply(ctx, config = {}) {
 
     const now = new Date()
     const openTask = pickOpenTask(tasks, now.getTime())
-    const decision = decide(opts, state, now, limits(), {
+    const decision = decide(opts, state, now, { ...limits(), initiative: initiativeCfg() }, {
       task: openTask,
       hasNewEvents: hasFreshEvents(state.lastSentAt),
     })
@@ -493,6 +541,10 @@ export function apply(ctx, config = {}) {
         const today = dayKey(now)
         state.lastSentAt = now.getTime()
         state.dailyCount[today] = (state.dailyCount[today] ?? 0) + 1
+        if (decision.reason === 'initiative') {
+          state.initiativeCount[today] = (state.initiativeCount[today] ?? 0) + 1
+          state.lastInitiativeAt = now.getTime()
+        }
       }
       if (!forced && openTask) {
         tasks = tasks.map((t) => (t.id === openTask.id ? { ...t, nudgedAt: now.getTime(), updatedAt: now.getTime() } : t))
@@ -650,6 +702,11 @@ export function apply(ctx, config = {}) {
               enabled: selfWakeEnabled(),
               today: state.awakeCount[dayKey(now)] ?? 0,
             },
+            initiative: {
+              enabled: initiativeCfg().enabled,
+              today: state.initiativeCount[dayKey(now)] ?? 0,
+              verdict: allowsInitiative({ initiative: initiativeCfg() }, state, now),
+            },
             decision,
             state: {
               lastSentAt: state.lastSentAt || null,
@@ -723,6 +780,15 @@ export const Config = z === null ? undefined : z.object({
   quietEnd: z.natural().min(0).max(23).default(QUIET_END).volatile(),
   /** 多久检查一次，单位分钟。 */
   tickMinutes: z.natural().min(1).max(1440).default(TICK_MS / 60_000).volatile(),
+
+  /** 主动搭话：允许在主人刚说完话之后也开口，但有自己更紧的限额。 */
+  initiative: z.object({
+    enabled: z.boolean().default(false).volatile(),
+    /** 一天最多主动搭几次话。 */
+    dailyCap: z.natural().min(1).max(10).default(INITIATIVE_CAP).volatile(),
+    /** 两次之间至少隔几小时。 */
+    minGapHours: z.number().min(0).max(24).default(INITIATIVE_GAP_MS / 3_600_000).volatile(),
+  }).default({}),
 
   /** 自己醒来干活：会真的消耗模型调用，默认关。 */
   selfWake: z.object({

@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
-import { addTask, completeTask, composeMessage, dayKey, decide, hasFreshEvents, isQuietHours, pickFollowUp, pickOpenTask, shouldSelfWake, shouldSend } from './lib/index.mjs'
+import { addTask, allowsInitiative, completeTask, composeMessage, dayKey, decide, hasFreshEvents, isQuietHours, pickFollowUp, pickOpenTask, shouldSelfWake, shouldSend } from './lib/index.mjs'
 
 /** 造一个固定的时间点，避免测试依赖当前时刻。 */
 const at = (h, m = 0) => new Date(2026, 9, 30, h, m, 0)
@@ -267,6 +267,38 @@ const baseState = { lastSentAt: 0, lastUserMessageAt: 0, dailyCount: {} }
   assert.equal(shouldSelfWake({ enabled: true, awakeCount: 3, dailyCap: 5 }, task).wake, true, '上限可调')
   assert.equal(shouldSelfWake({ enabled: true }, task).task.text, '把写边界的用例补全')
   console.log('OK 自己醒来')
+}
+
+// ---- 主动搭话：越过「主人刚说过话」这一条 ----
+{
+  const now = at(14)
+  const active = { lastSentAt: 0, lastUserMessageAt: now.getTime() - 60_000, dailyCount: {}, initiativeCount: {}, lastInitiativeAt: 0 }
+  const cfg = (extra = {}) => ({ initiative: { enabled: true, dailyCap: 2, minGapHours: 3 }, ...extra })
+
+  // 没开：还是老样子，主人刚说完就不打扰
+  assert.equal(decide({}, active, now, {}, {}).reason, 'user-active')
+
+  // 开了：可以主动搭一句
+  const r = decide({}, active, now, cfg(), {})
+  assert.equal(r.send, true)
+  assert.equal(r.reason, 'initiative', '只有这一条门槛被越过')
+
+  // 但自己的限额照旧
+  const used = { ...active, initiativeCount: { [dayKey(now)]: 2 } }
+  assert.equal(decide({}, used, now, cfg(), {}).reason, 'user-active', '一天两次用完就老实待着')
+
+  // 间隔也照旧
+  const recent = { ...active, lastInitiativeAt: now.getTime() - 30 * 60_000 }
+  assert.equal(decide({}, recent, now, cfg(), {}).reason, 'user-active', '半小时内不连搭')
+
+  // 免打扰不被越过
+  const quiet = decide({}, active, at(23, 30), cfg(), {})
+  assert.equal(quiet.send, false)
+  assert.equal(quiet.reason, 'quiet-hours', '免打扰是底线，主动搭话也越不过去')
+
+  assert.equal(allowsInitiative({ initiative: { enabled: false } }, active, now).reason, 'initiative-off')
+  assert.equal(allowsInitiative(cfg(), active, now).allow, true)
+  console.log('OK 主动搭话')
 }
 
 console.log('\n全部通过')
