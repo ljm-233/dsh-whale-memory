@@ -3,7 +3,7 @@
  * 运行：node test-selfcheck.mjs
  */
 import assert from 'node:assert/strict'
-import { buildArchiveDoc, correctEntry, cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, retractEntry, scoreMemory, searchEntries, similarity, splitForIm } from './lib/index.mjs'
+import { buildArchiveDoc, correctEntry, recentEvents, cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, retractEntry, scoreMemory, searchEntries, similarity, splitForIm } from './lib/index.mjs'
 import { DatabaseSync } from 'node:sqlite'
 
 // ---- detectEmotions ----
@@ -221,6 +221,37 @@ import { DatabaseSync } from 'node:sqlite'
   assert.equal(correctEntry(db, { id: target.id, text: '' }).reason, 'not-found', '旧 id 已经不存在')
   assert.equal(retractEntry(db, { id: 9999 }).reason, 'not-found')
   console.log('OK 记忆检索与修正')
+}
+
+// ---- 共享时间线 ----
+{
+  const db = new DatabaseSync(':memory:')
+  db.exec(`CREATE TABLE events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL,
+    session TEXT NOT NULL, window TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL, text TEXT NOT NULL)`)
+  const now = Date.now()
+  const ins = db.prepare('INSERT INTO events(at,session,window,kind,text) VALUES(?,?,?,?,?)')
+  ins.run(now - 3 * 3600_000, 's1', 'qq/group', 'user', '在群里问了一句')
+  ins.run(now - 2 * 3600_000, 's1', 'qq/group', 'assistant', '答了')
+  ins.run(now - 3600_000, 's2', 'web/main', 'user', '换个窗口继续')
+  ins.run(now, 's2', 'web/main', 'tool', 'group_history')
+
+  const all = recentEvents(db, { hours: 24 })
+  assert.equal(all.length, 4, '不同窗口的事件都在同一条线上')
+  assert.equal(all[0].text, 'group_history', '新到旧')
+
+  assert.equal(recentEvents(db, { hours: 24, kind: 'user' }).length, 2)
+  assert.equal(recentEvents(db, { hours: 24, kind: 'tool' }).length, 1)
+  assert.equal(recentEvents(db, { hours: 24, session: 's2' }).length, 2)
+  assert.equal(recentEvents(db, { hours: 1 }).length, 2, '最近一小时只有两条')
+  assert.equal(recentEvents(db, { hours: 24, limit: 2 }).length, 2)
+
+  // 两个窗口各自看到的是同一条线
+  const fromS1 = recentEvents(db, { hours: 24, session: 's1' })
+  assert.ok(fromS1.every((e) => e.session === 's1'))
+  assert.equal(recentEvents(db, {}).length, 4, '不给 hours 就是全都要')
+  console.log('OK 共享时间线')
 }
 
 console.log('\n全部通过')

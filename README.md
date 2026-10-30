@@ -214,6 +214,30 @@ node group-digest.js --hours 24
 ---
 
 
+## 跨窗口的近期事件线
+
+不同窗口、不同会话、不同工具，写进同一条线。
+
+不这么做的话，就会出现那种奇怪的事：刚在群里回完话，切到另一个窗口，那个窗口的我完全不知道刚才发生了什么——明明是同一个人。
+
+所以每条用户发言、每次回复、每次工具调用，都往 `events` 表记一笔（带会话 id 和窗口标记）。表里只留最近 5000 条，老的滚掉。
+
+模型侧一个工具 `timeline_recent`：
+
+```
+timeline_recent(hours: 6)              最近六小时都干了什么
+timeline_recent(kind: "tool")          只看工具调用
+timeline_recent(session: "session-…")  只看某个会话
+```
+
+```bash
+curl 'http://127.0.0.1:3080/dsh-whale-memory/timeline?hours=6'
+```
+
+只读，端点只接受 GET。
+
+---
+
 ## 记忆可以改错
 
 「存、查、回顾、改错」四件里，最容易被跳过的是最后一件。只存不改，记错了就只能一直错下去。

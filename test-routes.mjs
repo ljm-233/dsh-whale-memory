@@ -209,6 +209,29 @@ if (tools.size === 0) {
   console.log('OK 记忆工具')
 }
 
+// ---- 共享时间线端点 ----
+{
+  // 手动写两条，一条来自别的会话
+  const dbs = new DatabaseSync(join(dir, 'memory.db'))
+  dbs.prepare('INSERT INTO events(at,session,window,kind,text) VALUES(?,?,?,?,?)')
+    .run(Date.now() - 60_000, 'session-other', 'qq/group', 'user', '别的窗口里说的话')
+  dbs.prepare('INSERT INTO events(at,session,window,kind,text) VALUES(?,?,?,?,?)')
+    .run(Date.now(), 'session-this', 'web/main', 'assistant', '这边回的')
+  dbs.close()
+
+  const { status, body } = await call('/dsh-whale-memory/timeline')
+  assert.equal(status, 200)
+  assert.ok(body.count >= 2, '两个窗口的事件都读得到')
+  const texts = body.items.map((i) => i.text)
+  assert.ok(texts.includes('别的窗口里说的话'), '换个窗口也该看得见')
+  assert.ok(texts.includes('这边回的'))
+  assert.match(body.items[0].day, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
+
+  assert.equal((await call('/dsh-whale-memory/timeline', 'POST')).status, 405)
+  console.log('OK 共享时间线')
+}
+
 console.log('\n全部通过')
+
 
 
