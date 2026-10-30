@@ -3,7 +3,7 @@
  * 运行：node test-selfcheck.mjs
  */
 import assert from 'node:assert/strict'
-import { buildArchiveDoc, correctEntry, parseJudgement, readPolicy, recentEvents, writePolicy, cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, retractEntry, scoreMemory, searchEntries, similarity, splitForIm } from './lib/index.mjs'
+import { buildArchiveDoc, correctEntry, parseJudgement, putEntry, readPolicy, recentEvents, writePolicy, cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, retractEntry, scoreMemory, searchEntries, similarity, splitForIm } from './lib/index.mjs'
 import { DatabaseSync } from 'node:sqlite'
 
 // ---- detectEmotions ----
@@ -172,11 +172,11 @@ import { DatabaseSync } from 'node:sqlite'
   db.exec(`CREATE TABLE entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT, u TEXT NOT NULL, a TEXT NOT NULL,
     t INTEGER NOT NULL, w REAL NOT NULL DEFAULT 1, emo TEXT NOT NULL DEFAULT '[]',
-    vec BLOB, hot INTEGER NOT NULL DEFAULT 1)`)
+    vec BLOB, hot INTEGER NOT NULL DEFAULT 1, owner TEXT NOT NULL DEFAULT '')`)
   db.exec(`CREATE TABLE revisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT, entry_id INTEGER NOT NULL, action TEXT NOT NULL,
     before_u TEXT NOT NULL, before_a TEXT NOT NULL, after_u TEXT, after_a TEXT,
-    reason TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL)`)
+    reason TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, actor TEXT NOT NULL DEFAULT '')`)
   const now = Date.now()
   const ins = db.prepare('INSERT INTO entries(u,a,t,w,emo,hot) VALUES(?,?,?,?,?,?)')
   ins.run('主人说过喜欢咖啡', '嗯', now - 1000, 5, '["happy"]', 0)
@@ -283,6 +283,45 @@ import { DatabaseSync } from 'node:sqlite'
   assert.deepEqual(parseJudgement(''), { keep: true, line: '' })
   assert.deepEqual(parseJudgement(null), { keep: true, line: '' })
   console.log('OK parseJudgement')
+}
+
+// ---- 跨 Agent 的写边界 ----
+{
+  const db = new DatabaseSync(':memory:')
+  db.exec(`CREATE TABLE entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, u TEXT NOT NULL, a TEXT NOT NULL,
+    t INTEGER NOT NULL, w REAL NOT NULL DEFAULT 1, emo TEXT NOT NULL DEFAULT '[]',
+    vec BLOB, hot INTEGER NOT NULL DEFAULT 1, owner TEXT NOT NULL DEFAULT '')`)
+  db.exec(`CREATE TABLE revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, entry_id INTEGER NOT NULL, action TEXT NOT NULL,
+    before_u TEXT NOT NULL, before_a TEXT NOT NULL, after_u TEXT, after_a TEXT,
+    reason TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, actor TEXT NOT NULL DEFAULT '')`)
+
+  // 别人的写入必须自报家门
+  assert.equal(putEntry(db, { user: '我自己的事' }).reason, 'owner-required')
+  const foreign = putEntry(db, { owner: 'bot-other', user: '别人记的一件事' })
+  assert.equal(foreign.ok, true)
+  assert.equal(searchEntries(db, { owner: 'bot-other' }).length, 1)
+  assert.equal(searchEntries(db, {}).length, 1, '别人写的，我也读得到——读是共享的')
+
+  // 别人写的，不能被我随便改
+  const blocked = correctEntry(db, { id: foreign.id, text: '被我改了', actor: '' })
+  assert.equal(blocked.ok, false)
+  assert.equal(blocked.reason, 'not-yours')
+
+  // 显式允许才改得动，并且记下是谁改的
+  const allowed = correctEntry(db, {
+    id: foreign.id, text: '经允许改过', actor: 'me', allowForeign: true, reason: '对方同意了',
+  })
+  assert.equal(allowed.ok, true)
+  const rev = db.prepare('SELECT actor, action FROM revisions ORDER BY id DESC LIMIT 1').get()
+  assert.equal(rev.actor, 'me', '改别人写的要记下是谁动的手')
+  assert.equal(rev.action, 'correct')
+
+  // 自己写的自己随便改
+  const mine = putEntry(db, { owner: 'me', user: '我自己的事' })
+  assert.equal(correctEntry(db, { id: mine.id, text: '改了', actor: 'me' }).ok, true)
+  console.log('OK 写边界')
 }
 
 console.log('\n全部通过')

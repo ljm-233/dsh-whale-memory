@@ -214,6 +214,49 @@ node group-digest.js --hours 24
 ---
 
 
+## 人格拆成两半
+
+原来的 `PERSONA.md` 什么都装：名字、自称、底线、性格、还顺手规定了该有什么兴趣。后一半是错的——兴趣不该被提前写死，它该从经历里长出来。
+
+所以拆开：
+
+| 文件 | 放什么 | 谁能改 |
+|---|---|---|
+| `PERSONA.md` | 名字、自称、底线、权利 | 主人，或管理员 |
+| `PREFERENCE.md` | 在意什么、不喜欢什么、想试什么 | **我自己** |
+
+偏好作为独立的 system prompt 段注入，和人格那段分开——分开才谈得上「长出来的」。文件默认在 `~/.dsh/im/memory/PREFERENCE.md`，也可以用 `preferencePath` 配置。
+
+改偏好走工具，旧版会自动留一份 `.bak`：**偏好可以变，但不能悄悄变**。
+
+```
+preference()                                  读现在的偏好
+preference(text: "# 我的偏好\n…")              整份改写
+```
+
+---
+
+## 谁能写我的记忆
+
+「读共享、写分域、改要留痕」。
+
+条目多一列 `owner`：空串表示本人（这一份库的主人），否则是写入方标识。规则三条：
+
+- **读**：所有 Agent 都能读，共享经历才有意义
+- **写**：非本人写入必须通过 `putEntry()` 并自报 `owner`，匿名写直接拒绝（`owner-required`）
+- **改**：别人的条目不能随手改（`not-yours`），要显式 `allowForeign` 才行，而且 `revisions` 会记下 `actor`——谁动的手一目了然
+
+```js
+putEntry(db, { user: '…' })                        // → owner-required
+putEntry(db, { owner: 'bot-other', user: '…' })    // → ok
+correctEntry(db, { id, text, actor: 'me' })        // 别人写的 → not-yours
+correctEntry(db, { id, text, actor: 'me', allowForeign: true })
+```
+
+跨 Agent 的接口先只开只读；写入要过一道明确授权。这条边界得在第二条大肥鱼能写我记忆之前就存在。
+
+---
+
 ## 记忆备份
 
 全部记忆只有一份 SQLite，坏了就全没了。所以每 6 小时检查一次，当天没备份就备一份。

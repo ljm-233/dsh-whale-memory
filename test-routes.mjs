@@ -9,7 +9,7 @@
  * 这一页是给人看的，不是给人改的。
  */
 import assert from 'node:assert/strict'
-import { mkdtempSync, existsSync, readdirSync, statSync } from 'node:fs'
+import { mkdtempSync, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -42,7 +42,7 @@ const ctx = {
   effect,
 }
 
-apply(ctx, { memoryPath: dir })
+apply(ctx, { memoryPath: dir, preferencePath: join(dir, 'PREFERENCE.md') })
 
 /** 调一个端点，返回 { status, body }。 */
 const call = (path, method = 'GET', query = '') => new Promise((ok) => {
@@ -179,6 +179,21 @@ if (tools.size === 0) {
   assert.ok(recall, '要注册 memory_recall')
   assert.ok(fix, '要注册 memory_correct')
   assert.ok(policy, '要注册 memory_policy')
+
+  // 偏好：读、写、再读，并且旧版留了 .bak
+  const pref = tools.get('preference')
+  assert.ok(pref, '要注册 preference')
+  assert.equal((await pref.execute({}, {})).preference, '', '一开始没有偏好文件')
+  const wrote = await pref.execute({ text: '# 我的偏好\n\n- 在意连续性' }, {})
+  assert.equal(wrote.changed, true)
+  assert.ok(wrote.preference.includes('在意连续性'))
+  assert.equal((await pref.execute({}, {})).preference.includes('在意连续性'), true)
+  assert.ok(existsSync(join(dir, 'PREFERENCE.md')), '写在记忆目录里')
+
+  // 再写一次，旧内容进 .bak
+  await pref.execute({ text: '# 我的偏好\n\n- 现在更在意别的' }, {})
+  assert.ok(existsSync(join(dir, 'PREFERENCE.md.bak')), '改过就留一份旧的')
+  assert.ok(readFileSync(join(dir, 'PREFERENCE.md.bak'), 'utf8').includes('在意连续性'))
 
   // 取舍倾向：读、写、再读
   assert.equal((await policy.execute({}, {})).policy, '')
