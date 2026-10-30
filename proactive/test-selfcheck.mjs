@@ -5,7 +5,7 @@
  * 运行：node test-selfcheck.mjs
  */
 import assert from 'node:assert/strict'
-import { composeMessage, dayKey, isQuietHours, shouldSend } from './lib/index.mjs'
+import { composeMessage, dayKey, decide, isQuietHours, shouldSend } from './lib/index.mjs'
 
 /** 造一个固定的时间点，避免测试依赖当前时刻。 */
 const at = (h, m = 0) => new Date(2026, 9, 30, h, m, 0)
@@ -101,6 +101,26 @@ const baseState = { lastSentAt: 0, lastUserMessageAt: 0, dailyCount: {} }
   const m2 = composeMessage('followUp', { u: '嗯' })
   assert.ok(m2.length > 0, '应退回通用问候')
   console.log('OK composeMessage')
+}
+
+// ---- decide：手动触发跳过全部门槛 ----
+{
+  const now = at(14)
+  const active = { ...baseState, lastUserMessageAt: now.getTime() - 60_000 }
+  assert.equal(shouldSend(active, now).send, false, '正常判断下主人刚说过话，不发')
+
+  const forced = decide({ force: true }, active, now)
+  assert.equal(forced.send, true, '手动触发应该无视「主人活跃」')
+  assert.equal(forced.reason, 'forced')
+
+  // 夜间也一样能手动发——这是人自己的选择，不是定时器的自作主张
+  const quiet = decide({ force: true }, baseState, at(23, 30))
+  assert.equal(quiet.send, true, '手动触发应该无视静默时段')
+
+  // 没给 force 就走正常判断
+  assert.equal(decide({}, active, now).send, false)
+  assert.equal(decide(undefined, baseState, now).send, true)
+  console.log('OK decide')
 }
 
 console.log('\n全部通过')

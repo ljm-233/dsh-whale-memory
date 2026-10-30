@@ -145,6 +145,25 @@ export function pickFollowUp(db, sinceMs = 7 * 86400000) {
  * @param {object} [memo] 记忆条目
  * @returns {string}
  */
+/**
+ * 这一次到底发不发。
+ *
+ * `force` 是人手动要求的，跳过全部软门槛（夜间、冷却、配额、活跃）；
+ * 其余情况交给 {@link shouldSend} 按优先级判断。
+ *
+ * @param {{force?:boolean,kind?:string}} opts 手动触发参数
+ * @param {object} state 插件状态
+ * @param {Date} now 判断时刻
+ * @param {object} config 配置
+ * @returns {{send:boolean,reason?:string,kind?:string}}
+ */
+export function decide(opts, state, now, config) {
+  if (opts && opts.force === true) {
+    return { send: true, reason: 'forced', kind: opts.kind ?? 'silence' }
+  }
+  return shouldSend(state, now, config)
+}
+
 export function composeMessage(kind, memo) {
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)]
 
@@ -224,13 +243,13 @@ export function apply(ctx, config = {}) {
     }
 
     const now = new Date()
-    const decision = shouldSend(state, now, config)
+    const decision = decide(opts, state, now, config)
     if (!decision.send) return { sent: false, reason: decision.reason }
 
     // 找素材
     let kind = decision.kind ?? 'silence'
     let memo = null
-    let text = ''
+    let text = typeof opts.text === 'string' ? opts.text.trim() : ''
 
     if (existsSync(MEMORY_DB)) {
       try {
@@ -296,7 +315,16 @@ export function apply(ctx, config = {}) {
         path: '/dsh-proactive-message/send',
         handler: async (req, res) => {
           if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }).end(); return }
-          const result = await trySend({ force: true })
+          // 可选 body：{ text, kind }。给了 text 就原样发，方便手动测通道。
+          let body = {}
+          try {
+            body = JSON.parse(String(await new Promise((ok) => {
+              let d = ''
+              req.on('data', (c) => { d += c })
+              req.on('end', () => ok(d))
+            })) || '{}')
+          } catch { body = {} }
+          const result = await trySend({ force: true, text: body.text, kind: body.kind })
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
           res.end(JSON.stringify(result))
         },
