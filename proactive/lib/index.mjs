@@ -140,6 +140,28 @@ function clampText(text, n) {
   return t.length <= n ? t : `${t.slice(0, n - 1)}…`
 }
 
+/** 自己醒来干活，一天最多几次。 */
+const SELF_WAKE_CAP = 3
+
+/**
+ * 该不该自己醒来干活。
+ *
+ * 只看三件事：有没有开着、有没有没做完的事、今天醒过几次。
+ * 免打扰仍然生效——半夜不该为了写代码把自己叫起来。
+ *
+ * @param {{enabled?:boolean, dailyCap?:number, awakeCount?:number, isQuiet?:boolean}} input
+ * @param {object|null} task 待办
+ * @returns {{wake:boolean, reason:string, task?:object}}
+ */
+export function shouldSelfWake(input, task) {
+  if (input?.enabled !== true) return { wake: false, reason: 'disabled' }
+  if (input?.isQuiet === true) return { wake: false, reason: 'quiet-hours' }
+  if (!task) return { wake: false, reason: 'no-task' }
+  const cap = Number(input?.dailyCap) > 0 ? Number(input.dailyCap) : SELF_WAKE_CAP
+  if ((Number(input?.awakeCount) || 0) >= cap) return { wake: false, reason: 'daily-cap' }
+  return { wake: true, reason: 'pending-work', task }
+}
+
 /** 同一件事最多隔多久再提醒一次。 */
 const NUDGE_QUIET_MS = 12 * 60 * 60 * 1000
 
@@ -327,8 +349,8 @@ export function apply(ctx, config = {}) {
   }
   loadTasks()
 
-  /** @type {{lastSentAt:number, lastUserMessageAt:number, dailyCount:Record<string,number>, sentLog:Array}} */
-  let state = { lastSentAt: 0, lastUserMessageAt: 0, dailyCount: {}, sentLog: [] }
+  /** @type {{lastSentAt:number, lastUserMessageAt:number, dailyCount:Record<string,number>, sentLog:Array, awakeCount:Record<string,number>}} */
+  let state = { lastSentAt: 0, lastUserMessageAt: 0, dailyCount: {}, sentLog: [], awakeCount: {} }
 
   const load = () => {
     try {
@@ -338,6 +360,7 @@ export function apply(ctx, config = {}) {
           lastSentAt: raw.lastSentAt ?? 0,
           lastUserMessageAt: raw.lastUserMessageAt ?? 0,
           dailyCount: raw.dailyCount ?? {},
+          awakeCount: raw.awakeCount ?? {},
           sentLog: Array.isArray(raw.sentLog) ? raw.sentLog.slice(-50) : [],
         }
       }
@@ -360,6 +383,57 @@ export function apply(ctx, config = {}) {
 
   let dshIm = null
   ctx.inject(['dshIm'], (c) => { dshIm = c.dshIm })
+
+  /** 能自主醒来干活的前提：拿得到 agents，并且主人明确开了这个开关。 */
+  let agentsRef = null
+  ctx.inject(['agents'], (c) => { agentsRef = c.agents })
+
+  const selfWakeCfg = () => (config.selfWake && typeof config.selfWake === 'object' ? config.selfWake : {})
+  const selfWakeEnabled = () => {
+    const v = selfWakeCfg().enabled
+    return (typeof v?.get === 'function' ? v.get() : v) === true
+  }
+
+  /**
+   * 自己醒一次，把待办推进一步。
+   *
+   * 走 agent.followup：等于我自己给自己排了一轮，不是等人类开口。
+   * 默认关着——它会真的消耗模型调用，得人明确打开。
+   */
+  const trySelfWake = () => {
+    const now = new Date()
+    const today = dayKey(now)
+    const task = pickOpenTask(tasks, now.getTime())
+    const verdict = shouldSelfWake({
+      enabled: selfWakeEnabled(),
+      dailyCap: selfWakeCfg().dailyCap,
+      awakeCount: state.awakeCount[today] ?? 0,
+      isQuiet: isQuietHours(now, limits()),
+    }, task)
+    if (!verdict.wake) return verdict
+
+    const agents = agentsRef && typeof agentsRef.list === 'function' ? agentsRef.list() : []
+    const agent = (agents ?? [])[0]
+    if (!agent || typeof agent.followup !== 'function') return { wake: false, reason: 'no-agent' }
+
+    try {
+      agent.followup({
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: [{
+          type: 'text',
+          text: `（自己醒来）还有件事没做完：${verdict.task.text}\n看看能不能推进一点；推不动就说清楚卡在哪，或者把它关掉。`,
+        }],
+        source: { kind: 'proactive-wake', form: 'notice', summary: '自己醒来推进待办' },
+      })
+    } catch (error) {
+      return { wake: false, reason: 'followup-failed', detail: String(error?.message ?? error) }
+    }
+
+    state.awakeCount[today] = (state.awakeCount[today] ?? 0) + 1
+    save()
+    return { wake: true, reason: 'pending-work', task: verdict.task }
+  }
 
   // 记录主人的最后发言时间
   ctx.on('session/event', (session, event) => {
@@ -441,6 +515,8 @@ export function apply(ctx, config = {}) {
     const now = Date.now()
     if (now - lastTickAt < tickMs()) return
     lastTickAt = now
+    // 先想着干活，再考虑要不要开口。
+    try { trySelfWake() } catch { /* 醒不来就算了 */ }
     trySend().catch(() => undefined)
   }, 60_000)
   timer.unref?.()
@@ -570,6 +646,10 @@ export function apply(ctx, config = {}) {
               next: pickOpenTask(tasks, now.getTime()),
             },
             hasNewEvents: hasFreshEvents(state.lastSentAt),
+            selfWake: {
+              enabled: selfWakeEnabled(),
+              today: state.awakeCount[dayKey(now)] ?? 0,
+            },
             decision,
             state: {
               lastSentAt: state.lastSentAt || null,
@@ -643,4 +723,11 @@ export const Config = z === null ? undefined : z.object({
   quietEnd: z.natural().min(0).max(23).default(QUIET_END).volatile(),
   /** 多久检查一次，单位分钟。 */
   tickMinutes: z.natural().min(1).max(1440).default(TICK_MS / 60_000).volatile(),
+
+  /** 自己醒来干活：会真的消耗模型调用，默认关。 */
+  selfWake: z.object({
+    enabled: z.boolean().default(false).volatile(),
+    /** 一天最多自己醒几次。 */
+    dailyCap: z.natural().min(1).max(24).default(3).volatile(),
+  }).default({}),
 })

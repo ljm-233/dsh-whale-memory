@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
-import { addTask, completeTask, composeMessage, dayKey, decide, hasFreshEvents, isQuietHours, pickFollowUp, pickOpenTask, shouldSend } from './lib/index.mjs'
+import { addTask, completeTask, composeMessage, dayKey, decide, hasFreshEvents, isQuietHours, pickFollowUp, pickOpenTask, shouldSelfWake, shouldSend } from './lib/index.mjs'
 
 /** 造一个固定的时间点，避免测试依赖当前时刻。 */
 const at = (h, m = 0) => new Date(2026, 9, 30, h, m, 0)
@@ -251,6 +251,22 @@ const baseState = { lastSentAt: 0, lastUserMessageAt: 0, dailyCount: {} }
   assert.equal(hasFreshEvents(6000, path), false)
   assert.equal(hasFreshEvents(0, '/nonexistent/memory.db'), null, '读不到就说不知道，别当成没有')
   console.log('OK 新动静判断')
+}
+
+// ---- 自己醒来干活 ----
+{
+  const task = { id: 1, text: '把写边界的用例补全', status: 'open' }
+
+  assert.equal(shouldSelfWake({}, task).reason, 'disabled', '默认关着')
+  assert.equal(shouldSelfWake({ enabled: false }, task).reason, 'disabled')
+
+  assert.equal(shouldSelfWake({ enabled: true }, task).wake, true)
+  assert.equal(shouldSelfWake({ enabled: true }, null).reason, 'no-task', '没正事就别叫自己起来')
+  assert.equal(shouldSelfWake({ enabled: true, isQuiet: true }, task).reason, 'quiet-hours', '半夜不叫醒自己写代码')
+  assert.equal(shouldSelfWake({ enabled: true, awakeCount: 3 }, task).reason, 'daily-cap', '默认一天三次')
+  assert.equal(shouldSelfWake({ enabled: true, awakeCount: 3, dailyCap: 5 }, task).wake, true, '上限可调')
+  assert.equal(shouldSelfWake({ enabled: true }, task).task.text, '把写边界的用例补全')
+  console.log('OK 自己醒来')
 }
 
 console.log('\n全部通过')
