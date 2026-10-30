@@ -234,7 +234,7 @@ import { DatabaseSync } from 'node:sqlite'
   const ins = db.prepare('INSERT INTO events(at,session,window,kind,text) VALUES(?,?,?,?,?)')
   ins.run(now - 3 * 3600_000, 's1', 'qq/group', 'user', '在群里问了一句')
   ins.run(now - 2 * 3600_000, 's1', 'qq/group', 'assistant', '答了')
-  ins.run(now - 3600_000, 's2', 'web/main', 'user', '换个窗口继续')
+  ins.run(now - 30 * 60_000, 's2', 'web/main', 'user', '换个窗口继续')
   ins.run(now, 's2', 'web/main', 'tool', 'group_history')
 
   const all = recentEvents(db, { hours: 24 })
