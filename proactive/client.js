@@ -29,9 +29,9 @@ window.__ModuleLoader__.load({
         title: '什么时候可以说话',
         hint: '它自己判断该不该开口时的几个门槛。',
         fields: [
-          { path: ['dailyCap'], label: '每天最多发几条', kind: 'int', min: 0, max: 20 },
-          { path: ['cooldownHours'], label: '两次之间至少隔几小时', kind: 'num', min: 0, max: 72, step: 0.5 },
-          { path: ['silenceHours'], label: '多久没说话才算安静（小时）', kind: 'num', min: 1, max: 72, step: 0.5 },
+          { path: ['dailyCap'], label: '每天最多发几条', kind: 'int', min: 0, max: 500 },
+          { path: ['cooldownHours'], label: '两次之间至少隔几小时', kind: 'num', min: 0, max: 720 },
+          { path: ['silenceHours'], label: '多久没说话才算安静（小时）', kind: 'num', min: 0, max: 720 },
         ],
       },
       {
@@ -46,7 +46,7 @@ window.__ModuleLoader__.load({
         title: '检查频率',
         hint: '多久醒一次看看该不该说话。',
         fields: [
-          { path: ['tickMinutes'], label: '每多少分钟检查一次', kind: 'int', min: 1, max: 720 },
+          { path: ['tickMinutes'], label: '每多少分钟检查一次', kind: 'int', min: 1, max: 1440 },
         ],
       },
     ]
@@ -60,6 +60,29 @@ window.__ModuleLoader__.load({
         cur = cur[key]
       }
       return cur
+    }
+
+    /**
+     * 把输入框里的文字变成要写入的数值。
+     *
+     * 空串和非法输入都不写、不从默认值重置——只有点「恢复」才重置。
+     * 超出范围就夹到边界上，所以用户敲什么都不会被静默吞掉。
+     *
+     * @param {object} field 字段描述（带 min/max）
+     * @param {string} raw 输入框当前文字
+     * @param {number|undefined} current 现在实际生效的值
+     * @returns {{write:boolean, value?:number, clamped?:boolean}}
+     */
+    const normalizeNumber = (field, raw, current) => {
+      const text = String(raw).trim()
+      if (text === '') return { write: false }
+      const n = Number(text)
+      if (!Number.isFinite(n)) return { write: false }
+      const lo = field.min ?? -Infinity
+      const hi = field.max ?? Infinity
+      const value = Math.min(hi, Math.max(lo, n))
+      if (value === current) return { write: false, clamped: value !== n }
+      return { write: true, value, clamped: value !== n }
     }
 
     /** 写入一个字段：一级字段走 set，嵌套字段走 mutate + 路径。 */
@@ -105,29 +128,41 @@ window.__ModuleLoader__.load({
       const metaStyle = { fontSize: '11px', opacity: 0.6, fontFamily: 'monospace' }
 
       const Row = ({ field, value, overridden, disabled, onWrite, onReset }) => {
-        const onChange = (e) => {
-          const raw = e.target.value
-          if (raw === '') return onReset()
-          const n = Number(raw)
-          if (!Number.isFinite(n)) return
-          onWrite(n)
+        // 输入框自己存草稿：敲字时只改草稿，失焦或回车才写进去。
+        // 否则每敲一个数字就提交一次，Host 一回写就把光标和内容顶回去。
+        const asText = (v) => (v === undefined || v === null ? '' : String(v))
+        const [draft, setDraft] = React.useState(asText(value))
+        const [typing, setTyping] = React.useState(false)
+
+        React.useEffect(() => {
+          if (!typing) setDraft(asText(value))
+        }, [value, typing])
+
+        const commit = () => {
+          setTyping(false)
+          const result = normalizeNumber(field, draft, value)
+          if (result.clamped === true) setDraft(asText(result.value))
+          if (result.write === true) onWrite(result.value)
+          else if (draft.trim() === '' || !Number.isFinite(Number(draft))) setDraft(asText(value))
         }
-        const control = typeof Input === 'function'
-          ? h(Input, {
-            type: 'number',
-            value: value === undefined || value === null ? '' : String(value),
-            min: field.min, max: field.max, step: field.step,
-            disabled,
-            'aria-label': field.label,
-            onChange,
-            style: { width: '110px' },
-          })
-          : h('input', {
-            type: 'number',
-            value: value === undefined || value === null ? '' : String(value),
-            min: field.min, max: field.max, step: field.step,
-            disabled, onChange,
-          })
+
+        const props = {
+          type: 'number',
+          value: draft,
+          step: field.step ?? 'any',
+          disabled,
+          'aria-label': field.label,
+          onFocus: () => setTyping(true),
+          onChange: (e) => { setTyping(true); setDraft(e.target.value) },
+          onBlur: commit,
+          onKeyDown: (e) => { if (e.key === 'Enter') e.currentTarget.blur() },
+          style: { width: '110px' },
+        }
+        const control = typeof Input === 'function' ? h(Input, props) : h('input', props)
+
+        const range = field.min !== undefined || field.max !== undefined
+          ? `${field.min ?? ''}~${field.max ?? ''}`
+          : ''
 
         return h(
           'div',
@@ -136,7 +171,12 @@ window.__ModuleLoader__.load({
             'div',
             { style: labelStyle },
             h('span', { style: nameStyle }, field.label),
-            h('span', { style: metaStyle }, overridden ? `${PATH_TEXT(field.path)} · 已改` : PATH_TEXT(field.path)),
+            h(
+              'span',
+              { style: metaStyle },
+              overridden ? `${PATH_TEXT(field.path)} · 已改` : PATH_TEXT(field.path),
+              range === '' ? '' : `  (${range})`,
+            ),
           ),
           h(
             'div',
@@ -155,13 +195,6 @@ window.__ModuleLoader__.load({
             control,
           ),
         )
-      }
-
-      /** 本地时区的今天，和 Host 的 dayKey 对齐（不能用 toISOString，那是 UTC）。 */
-      const localDayKey = () => {
-        const d = new Date()
-        const p = (n) => String(n).padStart(2, '0')
-        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
       }
 
       const Panel = () => {
@@ -240,7 +273,7 @@ window.__ModuleLoader__.load({
     exports.name = 'dsh-proactive-message'
     exports.inject = ['slots']
     /** 纯函数，自检直接调，不用起浏览器。 */
-    exports.__test = { pick, writePath, resetPath, GROUPS }
+    exports.__test = { pick, writePath, resetPath, normalizeNumber, GROUPS }
     exports.apply = apply
     return module.exports
   },

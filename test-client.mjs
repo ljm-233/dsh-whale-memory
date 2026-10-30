@@ -130,7 +130,7 @@ console.log('OK 客户端设置页')
 
 // ---- 写入路径 ----
 // 路径 → 写法的映射是纯函数，直接调，不用模拟点击。
-const { writePath, resetPath, GROUPS } = plugin.__test
+const { writePath, resetPath, normalizeNumber, GROUPS } = plugin.__test
 assert.equal(GROUPS.length, 3)
 assert.equal(GROUPS.flatMap((g) => g.fields).length, 8, '一共 8 个设置项')
 
@@ -150,3 +150,18 @@ const bare = { get: () => undefined }
 const bareHandoff = handoffs.get('dsh-whale-memory')
 bareHandoff.factory(requireShim).apply(bare)
 console.log('OK 服务缺席时安全退出')
+
+// ---- normalizeNumber：自定义数值 ----
+{
+  const cap = { min: 0, max: 500 }
+  assert.deepEqual(normalizeNumber(cap, '37', 2), { write: true, value: 37, clamped: false }, '任意整数都能写')
+  assert.deepEqual(normalizeNumber(cap, '2.5', 2), { write: true, value: 2.5, clamped: false }, '小数也收')
+  assert.deepEqual(normalizeNumber(cap, '9999', 2), { write: true, value: 500, clamped: true }, '超上限夹到边界')
+  assert.deepEqual(normalizeNumber(cap, '-3', 2), { write: true, value: 0, clamped: true }, '低于下限夹到边界')
+  assert.deepEqual(normalizeNumber(cap, '', 2), { write: false }, '清空不写，也不会被重置成默认值')
+  assert.deepEqual(normalizeNumber(cap, 'abc', 2), { write: false }, '乱输入不写')
+  assert.deepEqual(normalizeNumber(cap, '2', 2), { write: false, clamped: false }, '没变就不写')
+  console.log('OK normalizeNumber')
+}
+
+console.log('\n全部通过')

@@ -390,15 +390,15 @@ export const Config = z === null ? undefined : z.object({
   statePath: z.string().default(''),
 
   /** 每天最多主动发几条。 */
-  dailyCap: z.natural().min(0).max(20).default(DAILY_CAP).volatile(),
+  dailyCap: z.natural().min(0).max(500).default(DAILY_CAP).volatile(),
   /** 两次主动消息至少隔几小时。 */
-  cooldownHours: z.number().min(0).max(72).default(COOLDOWN_MS / 3_600_000).volatile(),
+  cooldownHours: z.number().min(0).max(720).default(COOLDOWN_MS / 3_600_000).volatile(),
   /** 主人多久没说话才算「安静」，单位小时。 */
-  silenceHours: z.number().min(1).max(72).default(SILENCE_MS / 3_600_000).volatile(),
+  silenceHours: z.number().min(0).max(720).default(SILENCE_MS / 3_600_000).volatile(),
   /** 免打扰开始时间（0–23 点）。等于结束时间表示不启用。 */
   quietStart: z.natural().min(0).max(23).default(QUIET_START).volatile(),
   /** 免打扰结束时间（0–23 点）。 */
   quietEnd: z.natural().min(0).max(23).default(QUIET_END).volatile(),
   /** 多久检查一次，单位分钟。 */
-  tickMinutes: z.natural().min(1).max(720).default(TICK_MS / 60_000).volatile(),
+  tickMinutes: z.natural().min(1).max(1440).default(TICK_MS / 60_000).volatile(),
 })

@@ -31,18 +31,18 @@ window.__ModuleLoader__.load({
         title: '记忆注入',
         hint: '每次对话开头塞多少记忆进上下文。数字越小越省 token。',
         fields: [
-          { path: ['budgetChars'], label: '注入字符上限', kind: 'int', min: 200, max: 8000 },
-          { path: ['recentPairs'], label: '热区保留轮数', kind: 'int', min: 1, max: 20 },
-          { path: ['factMax'], label: '稳定事实条数', kind: 'int', min: 0, max: 50 },
+          { path: ['budgetChars'], label: '注入字符上限', kind: 'int', min: 50, max: 50000 },
+          { path: ['recentPairs'], label: '热区保留轮数', kind: 'int', min: 0, max: 100 },
+          { path: ['factMax'], label: '稳定事实条数', kind: 'int', min: 0, max: 500 },
         ],
       },
       {
         title: '主动联想',
         hint: '它会不会自己想起旧事。门槛调高，它就安静一些。',
         fields: [
-          { path: ['recallMax'], label: '每轮最多想起几条', kind: 'int', min: 0, max: 8 },
-          { path: ['recallThreshold'], label: '想起门槛', kind: 'num', min: 0, max: 10, step: 0.1 },
-          { path: ['weightMax'], label: '权重上限', kind: 'num', min: 1, max: 50, step: 1 },
+          { path: ['recallMax'], label: '每轮最多想起几条', kind: 'int', min: 0, max: 50 },
+          { path: ['recallThreshold'], label: '想起门槛', kind: 'num', min: 0, max: 1000 },
+          { path: ['weightMax'], label: '权重上限', kind: 'num', min: 1, max: 10000 },
         ],
       },
       {
@@ -65,6 +65,29 @@ window.__ModuleLoader__.load({
         cur = cur[key]
       }
       return cur
+    }
+
+    /**
+     * 把输入框里的文字变成要写入的数值。
+     *
+     * 空串和非法输入都不写、不从默认值重置——只有点「恢复」才重置。
+     * 超出范围就夹到边界上，所以用户敲什么都不会被静默吞掉。
+     *
+     * @param {object} field 字段描述（带 min/max）
+     * @param {string} raw 输入框当前文字
+     * @param {number|undefined} current 现在实际生效的值
+     * @returns {{write:boolean, value?:number, clamped?:boolean}}
+     */
+    const normalizeNumber = (field, raw, current) => {
+      const text = String(raw).trim()
+      if (text === '') return { write: false }
+      const n = Number(text)
+      if (!Number.isFinite(n)) return { write: false }
+      const lo = field.min ?? -Infinity
+      const hi = field.max ?? Infinity
+      const value = Math.min(hi, Math.max(lo, n))
+      if (value === current) return { write: false, clamped: value !== n }
+      return { write: true, value, clamped: value !== n }
     }
 
     /** 写入一个字段：一级字段走 set，嵌套字段走 mutate + 路径。 */
@@ -117,6 +140,24 @@ window.__ModuleLoader__.load({
 
       /** 一行设置：标签 + 控件 + 覆盖标记。 */
       const Row = ({ field, value, overridden, disabled, onWrite, onReset }) => {
+        // 输入框自己存草稿：敲字时只改草稿，失焦或回车才写进去。
+        // 否则每敲一个数字就提交一次，Host 一回写就把光标和内容顶回去。
+        const asText = (v) => (v === undefined || v === null ? '' : String(v))
+        const [draft, setDraft] = React.useState(asText(value))
+        const [typing, setTyping] = React.useState(false)
+
+        React.useEffect(() => {
+          if (!typing) setDraft(asText(value))
+        }, [value, typing])
+
+        const commit = () => {
+          setTyping(false)
+          const result = normalizeNumber(field, draft, value)
+          if (result.clamped === true) setDraft(asText(result.value))
+          if (result.write === true) onWrite(result.value)
+          else if (draft.trim() === '' || !Number.isFinite(Number(draft))) setDraft(asText(value))
+        }
+
         const control = (() => {
           if (field.kind === 'bool') {
             const checked = value === true
@@ -125,31 +166,26 @@ window.__ModuleLoader__.load({
             }
             return h('input', { type: 'checkbox', checked, disabled, onChange: (e) => onWrite(e.target.checked) })
           }
-          const onChange = (e) => {
-            const raw = e.target.value
-            if (raw === '') return onReset()
-            const n = Number(raw)
-            if (!Number.isFinite(n)) return
-            onWrite(n)
+          const props = {
+            type: 'number',
+            value: draft,
+            // step 给 any，否则只能按步长走，敲不进小数
+            step: field.step ?? 'any',
+            disabled,
+            'aria-label': field.label,
+            onFocus: () => setTyping(true),
+            onChange: (e) => { setTyping(true); setDraft(e.target.value) },
+            onBlur: commit,
+            onKeyDown: (e) => { if (e.key === 'Enter') e.currentTarget.blur() },
+            style: { width: '110px' },
           }
-          if (typeof Input === 'function') {
-            return h(Input, {
-              type: 'number',
-              value: value === undefined || value === null ? '' : String(value),
-              min: field.min,
-              max: field.max,
-              step: field.step,
-              disabled,
-              'aria-label': field.label,
-              onChange,
-              style: { width: '110px' },
-            })
-          }
-          return h('input', {
-            type: 'number', value: value === undefined || value === null ? '' : String(value),
-            min: field.min, max: field.max, step: field.step, disabled, onChange,
-          })
+          if (typeof Input === 'function') return h(Input, props)
+          return h('input', props)
         })()
+
+        const range = field.min !== undefined || field.max !== undefined
+          ? `${field.min ?? ''}~${field.max ?? ''}`
+          : ''
 
         return h(
           'div',
@@ -158,7 +194,12 @@ window.__ModuleLoader__.load({
             'div',
             { style: labelStyle },
             h('span', { style: nameStyle }, field.label),
-            h('span', { style: metaStyle }, overridden ? `${PATH_TEXT(field.path)} · 已改` : PATH_TEXT(field.path)),
+            h(
+              'span',
+              { style: metaStyle },
+              overridden ? `${PATH_TEXT(field.path)} · 已改` : PATH_TEXT(field.path),
+              range === '' ? '' : `  (${range})`,
+            ),
           ),
           h(
             'div',
@@ -260,7 +301,7 @@ window.__ModuleLoader__.load({
     exports.name = 'dsh-whale-memory'
     exports.inject = ['slots']
     /** 纯函数，自检直接调，不用起浏览器。 */
-    exports.__test = { pick, writePath, resetPath, GROUPS }
+    exports.__test = { pick, writePath, resetPath, normalizeNumber, GROUPS }
     exports.apply = apply
     return module.exports
   },
