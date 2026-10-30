@@ -125,9 +125,12 @@ export function dayKey(at) {
  */
 export function pickFollowUp(db, sinceMs = 7 * 86400000) {
   try {
+    // 排除带前缀的派生条目（联想/规律/归档）：它们本身就是概括句，
+    // 拿来接「后来怎么样了」只会得到一句不通的话。
     const rows = db.prepare(`
       SELECT u,a,w,t FROM entries
-      WHERE hot=0 AND w >= 3 AND u NOT LIKE '（联想）%'
+      WHERE hot=0 AND w >= 3
+        AND u NOT LIKE '（联想）%' AND u NOT LIKE '（规律）%' AND u NOT LIKE '（归档）%'
         AND t > ?
       ORDER BY w DESC LIMIT 5
     `).all(Date.now() - sinceMs)
@@ -251,7 +254,8 @@ export function apply(ctx, config = {}) {
     let memo = null
     let text = typeof opts.text === 'string' ? opts.text.trim() : ''
 
-    if (existsSync(MEMORY_DB)) {
+    // 显式给了文字就直接发，不再从记忆里找素材。
+    if (text === '' && existsSync(MEMORY_DB)) {
       try {
         const db = new DatabaseSync(MEMORY_DB, { readOnly: true })
         memo = pickFollowUp(db)

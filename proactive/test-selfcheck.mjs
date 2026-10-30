@@ -5,7 +5,8 @@
  * 运行：node test-selfcheck.mjs
  */
 import assert from 'node:assert/strict'
-import { composeMessage, dayKey, decide, isQuietHours, shouldSend } from './lib/index.mjs'
+import { DatabaseSync } from 'node:sqlite'
+import { composeMessage, dayKey, decide, isQuietHours, pickFollowUp, shouldSend } from './lib/index.mjs'
 
 /** 造一个固定的时间点，避免测试依赖当前时刻。 */
 const at = (h, m = 0) => new Date(2026, 9, 30, h, m, 0)
@@ -121,6 +122,30 @@ const baseState = { lastSentAt: 0, lastUserMessageAt: 0, dailyCount: {} }
   assert.equal(decide({}, active, now).send, false)
   assert.equal(decide(undefined, baseState, now).send, true)
   console.log('OK decide')
+}
+
+// ---- pickFollowUp：派生条目不能当素材 ----
+{
+  const db = new DatabaseSync(':memory:')
+  db.exec('CREATE TABLE entries(id INTEGER PRIMARY KEY, u TEXT, a TEXT, w REAL, t INTEGER, hot INTEGER)')
+  const now = Date.now()
+  const ins = db.prepare('INSERT INTO entries(u,a,w,t,hot) VALUES(?,?,?,?,0)')
+  ins.run('（归档）用户反复重启服务，调试群聊语料插…', '大意', 9, now)
+  ins.run('（规律）用户习惯用极简指令推进工作', '规律', 9, now)
+  ins.run('（联想）这两件事好像有点关系', '联想', 9, now)
+  ins.run('明天要不要把那台机器重装一遍', '先别', 5, now)
+
+  const picked = pickFollowUp(db)
+  assert.ok(picked, '应该挑到一条')
+  assert.equal(picked.u, '明天要不要把那台机器重装一遍', '派生条目（归档/规律/联想）都要跳过')
+
+  // 只剩派生条目时，宁可返回 null，也不能拼出一句不通的话
+  const onlyDerived = new DatabaseSync(':memory:')
+  onlyDerived.exec('CREATE TABLE entries(id INTEGER PRIMARY KEY, u TEXT, a TEXT, w REAL, t INTEGER, hot INTEGER)')
+  onlyDerived.prepare('INSERT INTO entries(u,a,w,t,hot) VALUES(?,?,?,?,0)')
+    .run('（归档）用户反复重启服务…', '大意', 9, now)
+  assert.equal(pickFollowUp(onlyDerived), null)
+  console.log('OK pickFollowUp')
 }
 
 console.log('\n全部通过')
