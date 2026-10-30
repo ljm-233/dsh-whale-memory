@@ -3,7 +3,7 @@
  * 运行：node test-selfcheck.mjs
  */
 import assert from 'node:assert/strict'
-import { buildArchiveDoc, correctEntry, htmlToText, parseJudgement, putEntry, readPolicy, recentEvents, writePolicy, cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, retractEntry, scoreMemory, searchEntries, similarity, splitForIm } from './lib/index.mjs'
+import { buildArchiveDoc, correctEntry, htmlToText, isPrivateSession, parseJudgement, putEntry, readPolicy, recentEvents, writePolicy, cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, retractEntry, scoreMemory, searchEntries, similarity, splitForIm } from './lib/index.mjs'
 import { DatabaseSync } from 'node:sqlite'
 
 // ---- detectEmotions ----
@@ -336,6 +336,14 @@ import { DatabaseSync } from 'node:sqlite'
   assert.equal(htmlToText(''), '')
   assert.equal(htmlToText(null), '')
   console.log('OK htmlToText')
+}
+
+// ---- isPrivateSession：不该抛，也不该把群聊当私聊 ----
+{
+  assert.equal(isPrivateSession(''), false, '空会话直接否')
+  assert.equal(isPrivateSession('session-unknown'), false, '查不到就当作非私聊')
+  assert.equal(typeof isPrivateSession('c2c:whatever'), 'boolean', '必须是布尔，不能抛')
+  console.log('OK isPrivateSession')
 }
 
 console.log('\n全部通过')
