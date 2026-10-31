@@ -11,7 +11,7 @@ import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const work = mkdtempSync(join(tmpdir(), 'miyu-smoke-'))
@@ -66,7 +66,7 @@ step('版本号一致', pkg.version === constVer, `${pkg.version} vs ${constVer}
 
 // 4) 加载主模块（在副本里，不碰本机数据）
 const load = spawnSync(process.execPath, ['--input-type=module', '-e',
-  `await import(${JSON.stringify(join(copy, 'lib', 'index.mjs'))}); console.log('loaded')`], {
+  `await import(${JSON.stringify(pathToFileURL(join(copy, 'lib', 'index.mjs')).href)}); console.log('loaded')`], {
   cwd: copy, env: fakeEnv(), encoding: 'utf8',
 })
 const loadErr = (load.stderr ?? '').trim().split('\n').pop() ?? ''
