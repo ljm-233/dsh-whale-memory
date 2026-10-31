@@ -339,6 +339,7 @@ window.__ModuleLoader__.load({
       const EntriesView = ({ onSwitchSpace, currentSpace }) => {
         const [zone, setZone] = React.useState('cold')
         const [data, setData] = React.useState(null)
+        const [dataZone, setDataZone] = React.useState('')
         const [failed, setFailed] = React.useState(false)
         const [seq, setSeq] = React.useState(0)
         const [q, setQ] = React.useState('')
@@ -356,9 +357,12 @@ window.__ModuleLoader__.load({
         React.useEffect(() => {
           let alive = true
           setFailed(false)
+          // 换页签先把上一页的数据清掉：不然新页签会拿旧数据渲染一次，
+          // 比如从「场景」切到「热区」，旧数据里没有 emo，渲染就炸。
+          setData(null)
           fetch(urlOf(zone), { headers: { accept: 'application/json' } })
             .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
-            .then((json) => { if (alive) setData(json) })
+            .then((json) => { if (alive) { setData(json); setDataZone(zone) } })
             .catch(() => { if (alive) { setData(null); setFailed(true) } })
           return () => { alive = false }
         }, [zone, seq, allSpaces])
@@ -378,11 +382,14 @@ window.__ModuleLoader__.load({
           },
         }, label)
 
-        const items = data === null ? [] : (data.items ?? [])
+        // 只有数据属于当前页签才算数，否则按「读取中」处理：
+        // 换页签的瞬间旧数据还在，用它渲染会读错字段、也会撞 key。
+        const settled = data !== null && dataZone === zone
+        const items = settled ? (data.items ?? []) : []
 
         const body = (() => {
           if (failed) return h('p', { style: { fontSize: '12px', opacity: 0.7 } }, '读不到记忆库。')
-          if (data === null) return h('p', { style: { fontSize: '12px', opacity: 0.55 } }, '读取中…')
+          if (!settled) return h('p', { style: { fontSize: '12px', opacity: 0.55 } }, '读取中…')
 
           if (zone === 'persona') {
             const text = String(data.text ?? '')
@@ -517,7 +524,7 @@ window.__ModuleLoader__.load({
             ...items.map((item) => h('li', { key: String(item.id), style: { fontSize: '12px', lineHeight: 1.5 } },
               h('div', { style: { fontSize: '11px', opacity: 0.5, fontFamily: 'monospace' } },
                 `${fmtTime(item.at)} · 权重 ${Math.round(item.weight * 10) / 10}${
-                  item.emo.length === 0 ? '' : ` · ${item.emo.map((k) => EMO_TEXT[k] ?? k).join('/')}`
+                  (item.emo ?? []).length === 0 ? '' : ` · ${(item.emo ?? []).map((k) => EMO_TEXT[k] ?? k).join('/')}`
                 }`),
               h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, item.user),
               item.assistant === '' ? null
