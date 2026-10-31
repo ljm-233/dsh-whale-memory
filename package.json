@@ -1,6 +1,6 @@
 {
   "name": "dsh-whale-memory",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "private": false,
   "description": "Proactive memory for DeepSeek Harness: emotion-aware recall, real BGE vectors, SQLite storage, and periodic associative rumination. Zero JS dependencies.",
@@ -27,7 +27,8 @@
     "test": "node tests/test-selfcheck.mjs && node tests/test-routes.mjs && node tests/test-client.mjs && node tests/test-new-modules.mjs",
     "ruminate": "node ruminate.js",
     "check:all": "node scripts/check-all.mjs",
-    "sync-shared": "node scripts/sync-shared.mjs"
+    "sync-shared": "node scripts/sync-shared.mjs",
+    "smoke": "node scripts/smoke.mjs"
   },
   "keywords": [
     "dsh-plugin",
