@@ -23,7 +23,36 @@ NEW = ('function Dg(n){return!!n&&(n.kind!=="group"||n[Xoe]===!0'
        '||n.rawEventType==="GROUP_AT_MESSAGE_CREATE"||$oe(n).length>0'
        '||/\\bmiyu\\b/iu.test(`${n.content??""}\\n${n.raw?.content??""}`))}')
 
-MARKER = '/\\bmiyu\\b/iu.test'
+# 幂等标记：英文版与中文版任一在场都算打过
+MARKERS = ('/\\bmiyu\\b/iu.test', '米鱼', '米魚')
+
+# 兜底锚点：上游把 Dg 的整体写法换掉时，只在函数体开头插一句判断
+FUNC_HEAD = 'function Dg(n){'
+INJECT = ('if(/\\bmiyu\\b|米鱼|米魚/iu.test(String(n?.content??"")+"\\n"+String(n?.raw?.content??"")))return!0;')
+
+
+def inject_fallback(src: str) -> int:
+    """上游改了 Dg 的写法：不猜整体，只在函数体最前面加一句判断。"""
+    if FUNC_HEAD not in src:
+        print("FAIL: 连 function Dg(n){ 都找不到，插件结构变了，需要人工看")
+        return 2
+    out = src.replace(FUNC_HEAD, FUNC_HEAD + INJECT, 1)
+    backup(out)
+    after = TARGET.read_text(encoding="utf-8")
+    if INJECT not in after:
+        print("FAIL: 写入后没找到注入内容")
+        return 3
+    print("PATCHED（兜底方式：函数体开头注入唤醒判断）")
+    return 0
+
+
+def backup(patched: str) -> None:
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    bak = BACKUP_DIR / f"dsh-im-index.js.bak-wake-{time.strftime('%Y%m%dT%H%M%S')}"
+    if TARGET.is_file():
+        shutil.copy2(TARGET, bak)
+        print(f"BACKUP: {bak}")
+    TARGET.write_text(patched, encoding="utf-8")
 
 
 def main() -> int:
@@ -33,11 +62,13 @@ def main() -> int:
 
     src = TARGET.read_text(encoding="utf-8")
 
-    if MARKER in src:
-        print("SKIP: 补丁已存在，无需重复")
+    if any(m in src for m in MARKERS):
+        print("SKIP: 唤醒词已在（英文或中文版），无需重复")
         return 0
 
     n = src.count(OLD)
+    if n == 0:
+        return inject_fallback(src)
     if n != 1:
         print(f"FAIL: 目标字符串出现 {n} 次（应为 1），可能插件已更新，中止")
         return 2
