@@ -335,3 +335,15 @@ node test-client.mjs      # 设置页：模拟客户端模块运行时，SSR 出
 ## 许可证
 
 MIT
+
+## 目录
+
+只认这几处，别的地方不再放东西：
+
+- `lib/` —— 插件本体（主插件的 `.mjs`，一个模块一件事）
+- `tests/` —— 回归测试，`npm test` 全跑
+- `scripts/` —— 维护脚本：安装、自检、补丁（`patch-*.py`）、`protect.sh`
+- `patches/` —— 给别人用的独立补丁（跨机器，自带参数）
+- `corpus/`、`proactive/`、`shared/` —— 三个子包，各有 `lib/` 与 `client.js`
+
+`~/.dsh/im/` 只留数据（`memory/`、`backup/`、附件），代码一律进仓库。

@@ -3,7 +3,7 @@
  * 运行：node test-selfcheck.mjs
  */
 import assert from 'node:assert/strict'
-import { buildArchiveDoc, correctEntry, htmlToText, isPrivateSession, parseJudgement, putEntry, readPolicy, recentEvents, writePolicy, cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, retractEntry, scoreMemory, searchEntries, similarity, splitForIm } from './lib/index.mjs'
+import { buildArchiveDoc, correctEntry, htmlToText, isPrivateSession, parseJudgement, putEntry, readPolicy, recentEvents, writePolicy, cosine, cueWords, detectEmotions, extractFacts, overlap, pairShadowed, retractEntry, scoreMemory, searchEntries, similarity, splitForIm } from '../lib/index.mjs'
 import { DatabaseSync } from 'node:sqlite'
 
 // ---- detectEmotions ----

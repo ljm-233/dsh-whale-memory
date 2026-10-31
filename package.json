@@ -23,8 +23,8 @@
     "scripts"
   ],
   "scripts": {
-    "check": "node --check lib/index.mjs && node --check client.js && node test-selfcheck.mjs && node test-routes.mjs && node test-client.mjs",
-    "test": "node test-selfcheck.mjs && node test-routes.mjs && node test-client.mjs",
+    "check": "node --check lib/index.mjs && node --check client.js && node tests/test-selfcheck.mjs && node tests/test-routes.mjs && node tests/test-client.mjs && node tests/test-new-modules.mjs",
+    "test": "node tests/test-selfcheck.mjs && node tests/test-routes.mjs && node tests/test-client.mjs && node tests/test-new-modules.mjs",
     "ruminate": "node ruminate.js",
     "check:all": "node scripts/check-all.mjs",
     "sync-shared": "node scripts/sync-shared.mjs"

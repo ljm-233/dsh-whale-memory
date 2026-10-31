@@ -52,7 +52,7 @@ const handoffs = new Map()
 globalThis.window = { __ModuleLoader__: { load: (h) => { handoffs.set(h.id, h) } } }
 globalThis.fetch = async () => ({ ok: false })
 
-const source = readFileSync(join(here, 'client.js'), 'utf8')
+const source = readFileSync(join(here, '..', 'client.js'), 'utf8')
 new Function('window', source)(globalThis.window)
 
 const handoff = handoffs.get('dsh-whale-memory')

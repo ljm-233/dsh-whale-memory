@@ -13,7 +13,7 @@ import { mkdtempSync, existsSync, readdirSync, readFileSync, statSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { apply } from './lib/index.mjs'
+import { apply } from '../lib/index.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'wm-routes-'))
 const routes = new Map()

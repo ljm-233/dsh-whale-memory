@@ -5,7 +5,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { sweep } from './lib/bili-report-watch.mjs'
+import { sweep } from '../lib/bili-report-watch.mjs'
 
 let pass = 0
 let fail = 0
