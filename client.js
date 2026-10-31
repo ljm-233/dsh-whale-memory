@@ -81,9 +81,9 @@ window.__ModuleLoader__.load({
         title: '夜班 / 桌面页',
         hint: '一天一次结账，蒸出下一轮要读的那一页。',
         fields: [
-          { path: ['night', 'enabled'], label: '每天自动跑', kind: 'bool' },
-          { path: ['night', 'hour'], label: '几点开（0–23）', kind: 'int', min: 0, max: 23 },
-          { path: ['night', 'minute'], label: '几分开（0–59）', kind: 'int', min: 0, max: 59 },
+          { path: ['night', 'enabled'], label: '每天自动跑', kind: 'bool', fallback: true },
+          { path: ['night', 'hour'], label: '几点开（0–23）', kind: 'int', min: 0, max: 23, fallback: 22 },
+          { path: ['night', 'minute'], label: '几分开（0–59）', kind: 'int', min: 0, max: 59, fallback: 5 },
         ],
       },
       {
@@ -632,6 +632,41 @@ window.__ModuleLoader__.load({
       hint ? h('span', { style: { fontSize: '10px', opacity: 0.45, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, hint) : null,
       )
 
+      /**
+       * 崩了就把错误摊开写在页面上，别整块空白——
+       * 设置页白屏最难查，连从哪儿错都不知道。
+       */
+      class SectionBoundary extends React.Component {
+        constructor(props) {
+          super(props)
+          this.state = { error: null }
+        }
+
+        static getDerivedStateFromError(error) {
+          return { error }
+        }
+
+        componentDidCatch(error, info) {
+          console.error('[whale-memory] 设置页崩了', error, info?.componentStack)
+        }
+
+        render() {
+          if (this.state.error !== null) {
+            return h('pre', {
+              style: {
+                fontSize: '11px',
+                lineHeight: 1.5,
+                whiteSpace: 'pre-wrap',
+                color: '#ff8f8f',
+                margin: 0,
+                padding: '8px 0',
+              },
+            }, `设置页崩了：${String(this.state.error && this.state.error.message ? this.state.error.message : this.state.error)}\n\n${String(this.state.error && this.state.error.stack ? this.state.error.stack : '')}`)
+          }
+          return this.props.children
+        }
+      }
+
       const Panel = () => {
         // 两个命名空间，各自一份快照。服务缺席时用占位表单，
         // 这样 hooks 的顺序和数量每轮都一样。
@@ -805,7 +840,7 @@ window.__ModuleLoader__.load({
               ...group.fields.map((field) => h(Row, {
                 key: PATH_TEXT(field.path),
                 field,
-                value: pick(snap.value, field.path),
+                value: pick(snap.value, field.path) ?? field.fallback,
                 overridden: pick(snap.user, field.path) !== undefined,
                 disabled,
                 onWrite: (value) => writePath(form, field.path, value),
@@ -825,9 +860,11 @@ window.__ModuleLoader__.load({
       const slots = ctx.get('slots')
       if (!slots || typeof slots.register !== 'function') return
 
+      const Guarded = () => h(SectionBoundary, null, h(Panel))
+
       slots.inject('settings.section', () => slots.register(
         { name: 'settings.section', id: NS, order: 60, label: () => '鲸娘记忆' },
-        Panel,
+        Guarded,
       ))
     }
 
