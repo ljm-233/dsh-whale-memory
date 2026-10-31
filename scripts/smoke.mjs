@@ -16,6 +16,15 @@ import { fileURLToPath } from 'node:url'
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const work = mkdtempSync(join(tmpdir(), 'miyu-smoke-'))
 const fakeHome = join(work, 'home')
+/** 子进程环境：HOME 与 USERPROFILE 一起给，Windows 才认。 */
+const fakeEnv = () => ({
+  ...process.env,
+  HOME: fakeHome,
+  USERPROFILE: fakeHome,
+  HOMEDRIVE: '',
+  HOMEPATH: '',
+  XDG_CONFIG_HOME: join(fakeHome, '.config'),
+})
 mkdirSync(fakeHome, { recursive: true })
 
 let failed = 0
@@ -38,9 +47,16 @@ db.exec('CREATE TABLE t(x)')
 console.log('sqlite ok')
 `
 const r = spawnSync(process.execPath, ['--input-type=module', '-e', probe], {
-  cwd: copy, env: { ...process.env, HOME: fakeHome }, encoding: 'utf8',
+  cwd: copy, env: fakeEnv(), encoding: 'utf8',
 })
 step('空 HOME 下 node:sqlite 可用', r.status === 0, r.stderr?.trim().split('\n').pop() ?? '')
+
+// 2.5) 确认子进程的 homedir 真的落在假 HOME 上（Windows 常在这里误报）
+const homeProbe = spawnSync(process.execPath, ['--input-type=module', '-e',
+  `import { homedir } from 'node:os'; console.log(homedir())`], { env: fakeEnv(), encoding: 'utf8' })
+const childHome = (homeProbe.stdout ?? '').trim()
+const homeOk = childHome === fakeHome
+step('子进程 homedir 已切到临时目录', homeOk, homeOk ? '' : `实际 ${childHome}（Windows 上属正常差异）`)
 
 // 3) 版本号：package.json 与 constants 一致
 const pkg = JSON.parse(readFileSync(join(copy, 'package.json'), 'utf8'))
@@ -51,7 +67,7 @@ step('版本号一致', pkg.version === constVer, `${pkg.version} vs ${constVer}
 // 4) 加载主模块（在副本里，不碰本机数据）
 const load = spawnSync(process.execPath, ['--input-type=module', '-e',
   `await import(${JSON.stringify(join(copy, 'lib', 'index.mjs'))}); console.log('loaded')`], {
-  cwd: copy, env: { ...process.env, HOME: fakeHome }, encoding: 'utf8',
+  cwd: copy, env: fakeEnv(), encoding: 'utf8',
 })
 const loadErr = (load.stderr ?? '').trim().split('\n').pop() ?? ''
 const missingHostDep = /ERR_MODULE_NOT_FOUND/u.test(loadErr) && /@deepseek-ai/u.test(loadErr)
@@ -64,11 +80,13 @@ const dirs = [
   join(fakeHome, '.dsh', 'group-corpus'),
   join(fakeHome, '.dsh', 'proactive-message'),
 ]
-step('空 HOME 下不会崩在路径上', dirs.every((d) => !existsSync(d)) && load.status === 0)
+const cleanDirs = dirs.every((d) => !existsSync(d))
+step('空 HOME 下不会崩在路径上', homeOk ? (cleanDirs && load.status === 0) : load.status === 0,
+  homeOk ? '' : 'homedir 没切过去，只校验加载')
 
 // 6) 全套测试在副本里仍然通过
 const all = spawnSync(process.execPath, [join(copy, 'scripts', 'check-all.mjs')], {
-  cwd: copy, env: { ...process.env, HOME: fakeHome }, encoding: 'utf8',
+  cwd: copy, env: fakeEnv(), encoding: 'utf8',
 })
 const tail = (all.stdout ?? '').trim().split('\n').slice(-2).join(' ')
 step('check-all 在干净副本里通过', all.status === 0, tail)
