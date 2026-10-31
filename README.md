@@ -356,5 +356,6 @@ MIT
 - `diary/` —— `whale-diary.md`、`whale-diary-private.md`
 - `notes/` —— `PERSONA.md`、`PREFERENCE.md`、`CONTACTS.md`、`RULES.md`、`USER.md`
 - `backups/` —— 记忆快照与插件原件备份
+- `plugins/<名>/` —— 各插件自己生成的数据：`whale-memory/`（archives、group-digest）、`group-corpus/`（corpus.db、style-profile）、`proactive-message/`（state、tasks）
 
 旧路径（`~/.dsh/whale-memory/memory.db`、`~/.dsh/whale-diary*.md`、`~/.dsh/im/memory/*.md`、`~/.dsh/whale-memory/backups`、`~/.dsh/im/backup`）都留了软链指向这里，删数据只认 `~/.dsh/miyu/` 一处。
