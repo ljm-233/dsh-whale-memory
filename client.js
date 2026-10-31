@@ -31,6 +31,8 @@ window.__ModuleLoader__.load({
     /** 主动消息是另一个插件、另一个命名空间，但共用这一页。 */
     const PROACTIVE_NS = 'dsh-proactive-message'
     const STATUS_URL = '/dsh-whale-memory/status'
+    const SELF_CHECK_URL = '/dsh-whale-memory/selfcheck'
+    const NIGHTLY_URL = '/dsh-whale-memory/nightly'
     const PROACTIVE_STATUS_URL = '/dsh-proactive-message/status'
 
     /** 服务缺席时的占位表单，保证 hooks 每轮都按同样顺序调用。 */
@@ -72,6 +74,16 @@ window.__ModuleLoader__.load({
         hint: '同一份库按空间隔离：换一个空间，写进去和想起来的都只看那一格。',
         fields: [
           { path: ['space'], label: '当前空间', kind: 'string' },
+        ],
+      },
+      {
+        form: 'memory',
+        title: '夜班 / 桌面页',
+        hint: '一天一次结账，蒸出下一轮要读的那一页。',
+        fields: [
+          { path: ['night', 'enabled'], label: '每天自动跑', kind: 'bool' },
+          { path: ['night', 'hour'], label: '几点开（0–23）', kind: 'int', min: 0, max: 23 },
+          { path: ['night', 'minute'], label: '几分开（0–59）', kind: 'int', min: 0, max: 59 },
         ],
       },
       {
@@ -638,6 +650,9 @@ window.__ModuleLoader__.load({
         const [memoryStatus, setMemoryStatus] = React.useState(null)
         const [proactiveStatus, setProactiveStatus] = React.useState(null)
         const [trend, setTrend] = React.useState(null)
+        const [selfCheck, setSelfCheck] = React.useState(null)
+        const [nightBusy, setNightBusy] = React.useState(false)
+        const [nightNote, setNightNote] = React.useState('')
         const [tick, setTick] = React.useState(0)
 
         React.useEffect(() => {
@@ -651,6 +666,7 @@ window.__ModuleLoader__.load({
           load(STATUS_URL, setMemoryStatus)
           load(PROACTIVE_STATUS_URL, setProactiveStatus)
           load('/dsh-whale-memory/trend?days=7', setTrend)
+          load(SELF_CHECK_URL, setSelfCheck)
           return () => { alive = false }
         }, [tick])
 
@@ -679,6 +695,8 @@ window.__ModuleLoader__.load({
           Stat('向量', memoryStatus.embedOk ? '正常' : '降级'),
           Stat('想起', `${memoryStatus.stats?.recalled ?? 0} 次`),
           Stat('蒸馏', `${memoryStatus.stats?.distillCalls ?? 0} 次`),
+          Stat('桌面页', selfCheck === null ? '?' : `${selfCheck.deskBytes ?? 0} 字节`),
+          Stat('今晚并入', selfCheck === null ? '?' : `${selfCheck.mergedTonight ?? 0} 条`),
           )
 
         const footNotes = []
@@ -720,6 +738,39 @@ window.__ModuleLoader__.load({
           }, '刷新'),
           ),
           statGrid,
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' } },
+            h('button', {
+              type: 'button',
+              disabled: nightBusy,
+              onClick: () => {
+                if (nightBusy) return
+                setNightBusy(true)
+                setNightNote('')
+                fetch(NIGHTLY_URL, { method: 'POST' })
+                  .then((res) => res.json())
+                  .then((json) => {
+                    setNightNote(json?.ok
+                      ? `跑完了：桌面页 ${json.deskBytes} 字节，并入 ${json.merged} 条`
+                      : `没跑成：${json?.reason ?? json?.errors?.[0] ?? '未知原因'}`)
+                    setTick((n) => n + 1)
+                  })
+                  .catch(() => setNightNote('请求失败'))
+                  .finally(() => setNightBusy(false))
+              },
+              style: {
+                border: '1px solid rgba(128,128,128,0.35)',
+                borderRadius: '999px',
+                padding: '3px 12px',
+                fontSize: '11px',
+                background: 'transparent',
+                color: 'inherit',
+                cursor: nightBusy ? 'progress' : 'pointer',
+                opacity: nightBusy ? 0.5 : 0.85,
+              },
+            }, nightBusy ? '跑着…' : '立刻跑一班'),
+            h('span', { style: { fontSize: '11px', opacity: 0.55 } },
+              nightNote !== '' ? nightNote : (selfCheck?.logFile ? `日志：${selfCheck.logFile}` : '')),
+          ),
           ...footNotes.map((text, i) => h('p', {
             key: `n${i}`,
             style: { fontSize: '11px', opacity: 0.55, margin: 0, lineHeight: 1.6 },
