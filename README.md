@@ -26,12 +26,23 @@
 | 情绪召回 | 五类情绪 + 线索词 + 真向量余弦 + 累积权重，不等线索 |
 | 压缩抢救 | 上下文被压掉时把原文捞回来，判断值不值得留，再蒸馏成记忆 |
 | 每天写日记 | 到点自己记一笔，不等被问 |
+| 场景层 | 同一条线索下的旧事聚成一段，按时间串起来，问起来给的是整段不是碎片 |
+| 关系图谱 | 同一段记忆里反复一起出现的词连成边，召回时给一行「常一起出现」 |
+| 画像层 | 从事实和常聊里蒸出「我记得的你」，放进系统提示；可重建，不写死 |
+| 只给一次 | 同一段记忆在同一会话只注入一次，压缩后才重新给，省 token 也不吵 |
+| 时效衰减 | 相关度相近时新记忆优先，老事实最多损失一半排序分，不沉底 |
+| 混合检索 | 关键词与向量各排一路，RRF 合成；单路命中不丢，双路靠前优先 |
+| 按天账 | 蒸馏、想起、抢救都按天记一笔，设置页能看近 7 天趋势 |
 | 跨窗口事件线 | 任何会话、任何工具都写同一条线，换个窗口也知道刚发生了什么 |
 | 记忆可改错 | 修正/撤回，原件进 `revisions` 留档 |
 | 写边界 | 读共享、写分域、改要留痕，别人不能随手改我的记忆 |
 | 备份 | `VACUUM INTO` 快照 + 当场完整性校验 + 轮转 |
 | 读网页 | 绕开本机代理的假 DNS，直接连真实地址 |
 | 设置面板 | Web 设置里一页，14 项可调，改完立刻生效 |
+| 记忆空间 | 同一份库按 `space` 隔离，落库和召回都只看当前空间 |
+| 记忆浏览器 | 设置页里能看热区、冷区、场景、画像四栏 |
+| 可改可撤 | 每条记忆下能改、能撤回，改动的原件进 revisions 留档 |
+| 导出/版本化 | `scripts/export-memory.mjs` 导成 json+md，可 `--git` 提交、`--push` 推远端 |
 
 ---
 
@@ -55,10 +66,13 @@
 | `lib/backup.mjs` | 快照、校验、轮转 |
 | `lib/salvage.mjs` | 压缩抢救：存档落盘、私发转投、逐块蒸馏 |
 | `lib/consolidate.mjs` | 自己梳理：合并、删除、提炼规律 |
+| `lib/scenes.mjs` | 场景层：按共同线索把散记忆聚成一段，供注入时按整段给 |
+| `lib/persona.mjs` | 画像层：从事实、线索、场景、情绪蒸出「我记得的你」，写进 meta |
+| `lib/graph.mjs` | 实体关系：共现统计，建 entities/edges，供召回补一行关联 |
 | `lib/prompt.mjs` | 系统提示词两段：纪律（静态）+ 偏好（会变） |
 | `lib/tools.mjs` | 模型可调用的工具 |
 | `lib/routes.mjs` | HTTP 端点 |
-| `lib/recall.mjs` | 记忆注入：相关旧事、事实、最近几轮、日记、群摘要 |
+| `lib/recall.mjs` | 记忆注入：场景、相关旧事、事实、最近几轮、日记、群摘要；带会话去重与时效衰减 |
 | `lib/writer.mjs` | 交互落库：热区挤占、冷区合并、硬上限兜底 |
 | `lib/shared.mjs` | 三个包共用的零碎工具（生成文件，别手改） |
 | `client.js` | 浏览器端设置页（手写 bundle，无构建） |
@@ -359,3 +373,50 @@ MIT
 - `plugins/<名>/` —— 各插件自己生成的数据：`whale-memory/`（archives、group-digest）、`group-corpus/`（corpus.db、style-profile）、`proactive-message/`（state、tasks）
 
 旧路径（`~/.dsh/whale-memory/memory.db`、`~/.dsh/whale-diary*.md`、`~/.dsh/im/memory/*.md`、`~/.dsh/whale-memory/backups`、`~/.dsh/im/backup`）都留了软链指向这里，删数据只认 `~/.dsh/miyu/` 一处。
+
+---
+
+## 启动与排障
+
+**症状：每轮都报 `database is locked`，等多久都不好。**
+
+先分清两种：
+
+- **争用**：短暂锁冲突。主连接已带 `busy_timeout = 5000`，正常会自己等过去。
+- **死锁**：有进程捏着写锁不放。等多久都没用，必须是进程没了才行。
+
+查是谁捏着库：
+
+```bash
+fuser ~/.dsh/whale-memory/memory.db
+ss -ltnp | grep 3080
+```
+
+如果某个 node 进程**没有监听 3080**、状态是 `D`（不可中断 IO 等待）、子进程 `defunct`，那就是重复启动留下的僵死实例：
+
+```bash
+ps -o pid,stat,cmd -p <PID>     # 确认状态 D / Z
+kill -9 <PID>                   # SIGTERM 杀不掉，只能 -9
+```
+
+然后确认锁真的空了：
+
+```bash
+sqlite3 ~/.dsh/whale-memory/memory.db "PRAGMA busy_timeout=1000; BEGIN IMMEDIATE; ROLLBACK;"
+# 立刻返回 = 锁空了；卡 1 秒报 locked = 还有别人握着
+```
+
+防复发：用 `scripts/start-dsh.sh` 起服务，它会先看 3080 有没有人监听、有没有 D 状态进程捏着库，该拒绝就拒绝、该 kill 就 kill。
+
+---
+
+## 兼容性
+
+| 项 | 要求 | 不满足时 |
+|---|---|---|
+| Node | `^22.19.0 \|\| >=24.0.0` | `node:sqlite` 缺失，插件无法加载（22.19 之前要加 `--experimental-sqlite`） |
+| `DatabaseSync` 的 `timeout` 选项 | 新版本才有 | `lib/db-open.mjs` 自动退回 `PRAGMA busy_timeout`，功能不变 |
+| SQLite fts5 + trigram 分词 | 随 Node 内置（3.34+ 有 trigram） | 全文索引建不出来，`keywordIds` 返回 null，搜索退回 LIKE |
+| 系统 | 任意 | `scripts/start-dsh.sh`、`dsh-whale-ruminate.service` 是 Linux 专用；Windows 上直接 `dsh web` 即可，其它功能不受影响 |
+
+端口 3080、`memory.db` 路径都在配置里，换机器不用改代码。

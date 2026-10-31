@@ -231,7 +231,7 @@ export function apply(ctx, config = {}) {
     // 显式给了文字就直接发，不再从记忆里找素材。
     if (text === '' && existsSync(MEMORY_DB)) {
       try {
-        const db = new DatabaseSync(MEMORY_DB, { readOnly: true })
+        const db = new DatabaseSync(MEMORY_DB, { readOnly: true, timeout: 5000 })
         memo = pickFollowUp(db)
         db.close()
         if (memo) {

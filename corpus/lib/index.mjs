@@ -54,7 +54,7 @@ export function apply(ctx, config = {}) {
   })()
   mkdirSync(dir, { recursive: true })
 
-  const db = new DatabaseSync(join(dir, DB_FILE))
+  const db = new DatabaseSync(join(dir, DB_FILE), { timeout: 5000 })
   const jsonl = join(dir, JSONL_FILE)
 
   db.exec(`

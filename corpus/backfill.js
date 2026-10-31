@@ -42,7 +42,7 @@ if (!existsSync(SRC)) {
 }
 
 mkdirSync(DIR, { recursive: true })
-const db = new DatabaseSync(join(DIR, DB_FILE))
+const db = new DatabaseSync(join(DIR, DB_FILE), { timeout: 5000 })
 db.exec(`
   PRAGMA journal_mode = WAL;
   CREATE TABLE IF NOT EXISTS messages (
@@ -62,7 +62,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS config (k TEXT PRIMARY KEY, v TEXT);
 `)
 
-const src = new DatabaseSync(SRC, { readOnly: true })
+const src = new DatabaseSync(SRC, { readOnly: true, timeout: 5000 })
 const rows = src.prepare(`
   SELECT platform_message_id, sender_id, sender_name, text, sent_at
   FROM messages ORDER BY sent_at ASC

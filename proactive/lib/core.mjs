@@ -110,7 +110,7 @@ export function shouldSend(state, now, cfg = {}) {
 export function hasFreshEvents(lastSentAt, dbPath = MEMORY_DB) {
   try {
     if (!existsSync(dbPath)) return null
-    const db = new DatabaseSync(dbPath, { readOnly: true })
+    const db = new DatabaseSync(dbPath, { readOnly: true, timeout: 5000 })
     const row = db.prepare('SELECT MAX(at) AS m FROM events').get()
     db.close()
     const newest = Number(row?.m) || 0

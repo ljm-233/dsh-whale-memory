@@ -100,7 +100,10 @@ async function main() {
     console.log('记忆库不存在，跳过')
     return 0
   }
-  const db = new DatabaseSync(DB_PATH)
+  // 和宿主抢同一把写锁：默认 timeout 是 0，一碰就 database is locked。
+  // 给 5 秒缓冲，并且失败时由下面的重试兜一层。
+  const db = new DatabaseSync(DB_PATH, { timeout: 5000 })
+  db.exec('PRAGMA busy_timeout = 5000')
 
   // 只从冷区、且非联想产生的条目里挑
   const cold = db.prepare(`
@@ -194,7 +197,29 @@ async function main() {
   return 0
 }
 
-main().then((code) => process.exit(code)).catch((e) => {
+/**
+ * 跑一次；锁没抢到就退避重试，最多三次。
+ *
+ * 定时任务失败一次不值得让 systemd 记成 failed，重试完还不行再报。
+ *
+ * @returns {Promise<number>} 退出码
+ */
+async function runWithRetry(attempts = 3) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await main()
+    } catch (e) {
+      const locked = String(e?.message ?? '').includes('database is locked')
+      if (!locked || i === attempts - 1) throw e
+      const wait = 1000 * (i + 1)
+      console.log(`库被占着，${wait}ms 后重试（第 ${i + 1} 次）`)
+      await new Promise((r) => setTimeout(r, wait))
+    }
+  }
+  return 0
+}
+
+runWithRetry().then((code) => process.exit(code)).catch((e) => {
   console.error('ruminate 失败:', e.message)
   process.exit(1)
 })

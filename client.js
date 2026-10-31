@@ -68,6 +68,14 @@ window.__ModuleLoader__.load({
       },
       {
         form: 'memory',
+        title: '记忆空间',
+        hint: '同一份库按空间隔离：换一个空间，写进去和想起来的都只看那一格。',
+        fields: [
+          { path: ['space'], label: '当前空间', kind: 'string' },
+        ],
+      },
+      {
+        form: 'memory',
         title: '日记',
         hint: '到点自己记一笔，不管有没有人找。这是让它「一直在」的那根线。',
         fields: [
@@ -218,6 +226,24 @@ window.__ModuleLoader__.load({
         }
 
         const control = (() => {
+          if (field.kind === 'string') {
+            const commitText = () => {
+              setTyping(false)
+              const next = String(draft).trim()
+              if (next !== String(value ?? '')) onWrite(next)
+            }
+            return h('input', {
+              type: 'text',
+              value: draft,
+              disabled,
+              'aria-label': field.label,
+              onFocus: () => setTyping(true),
+              onChange: (e) => { setTyping(true); setDraft(e.target.value) },
+              onBlur: commitText,
+              onKeyDown: (e) => { if (e.key === 'Enter') e.currentTarget.blur() },
+              style: { width: '180px' },
+            })
+          }
           if (field.kind === 'bool') {
             const checked = value === true
             if (typeof Switch === 'function') {
@@ -298,21 +324,32 @@ window.__ModuleLoader__.load({
        * 纯只读：这里只有文字和一个切换按钮，没有任何写入口——
        * 记忆内容该怎么变是插件自己决定的，不该由设置页手动改。
        */
-      const EntriesView = () => {
+      const EntriesView = ({ onSwitchSpace, currentSpace }) => {
         const [zone, setZone] = React.useState('cold')
         const [data, setData] = React.useState(null)
         const [failed, setFailed] = React.useState(false)
         const [seq, setSeq] = React.useState(0)
+        const [q, setQ] = React.useState('')
+        const [allSpaces, setAllSpaces] = React.useState(false)
+
+        const urlOf = (z) => {
+          const extra = `&keyword=${encodeURIComponent(q)}&all=${allSpaces ? 1 : 0}`
+          if (z === 'scenes') return '/dsh-whale-memory/scenes'
+          if (z === 'persona') return '/dsh-whale-memory/persona'
+          if (z === 'graph') return '/dsh-whale-memory/graph'
+          if (z === 'spaces') return '/dsh-whale-memory/spaces'
+          return `/dsh-whale-memory/entries?zone=${z}&limit=50${extra}`
+        }
 
         React.useEffect(() => {
           let alive = true
           setFailed(false)
-          fetch(`/dsh-whale-memory/entries?zone=${zone}&limit=50`, { headers: { accept: 'application/json' } })
+          fetch(urlOf(zone), { headers: { accept: 'application/json' } })
             .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
             .then((json) => { if (alive) setData(json) })
             .catch(() => { if (alive) { setData(null); setFailed(true) } })
           return () => { alive = false }
-        }, [zone, seq])
+        }, [zone, seq, allSpaces])
 
         const tab = (key, label) => h('button', {
           type: 'button',
@@ -329,7 +366,181 @@ window.__ModuleLoader__.load({
           },
         }, label)
 
-        const items = data === null ? [] : data.items
+        const items = data === null ? [] : (data.items ?? [])
+
+        const body = (() => {
+          if (failed) return h('p', { style: { fontSize: '12px', opacity: 0.7 } }, '读不到记忆库。')
+          if (data === null) return h('p', { style: { fontSize: '12px', opacity: 0.55 } }, '读取中…')
+
+          if (zone === 'persona') {
+            const text = String(data.text ?? '')
+            return text === ''
+              ? h('p', { style: { fontSize: '12px', opacity: 0.55 } }, '还没有画像，等下一次梳理。')
+              : h('pre', {
+                style: {
+                  fontSize: '12px', lineHeight: 1.6, whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word', margin: 0, fontFamily: 'inherit', opacity: 0.85,
+                },
+              }, text)
+          }
+
+          if (zone === 'graph') {
+            const nodes = Array.isArray(data.nodes) ? data.nodes : []
+            const links = Array.isArray(data.edges) ? data.edges : []
+            if (nodes.length === 0) return h('p', { style: { fontSize: '12px', opacity: 0.55 } }, '图谱还是空的。')
+            const W = 560
+            const H = 320
+            const shown = nodes.slice(0, 40)
+            const names = new Set(shown.map((n) => n.name))
+            const edges = links.filter((e) => names.has(e.a) && names.has(e.b))
+            // 便宜的三段式布局：圆上初始 → 斥力推开 → 边当弹簧拉近。60 个点以内够用，不引依赖。
+            const pos = new Map()
+            shown.forEach((n, i) => {
+              const ang = (2 * Math.PI * i) / shown.length
+              pos.set(n.name, { x: W / 2 + Math.cos(ang) * 110, y: H / 2 + Math.sin(ang) * 110 })
+            })
+            for (let iter = 0; iter < 120; iter++) {
+              const list = [...pos.entries()]
+              for (let i = 0; i < list.length; i++) {
+                for (let j = i + 1; j < list.length; j++) {
+                  const [na, pa] = list[i]
+                  const [nb, pb] = list[j]
+                  let dx = pa.x - pb.x
+                  let dy = pa.y - pb.y
+                  let d2 = dx * dx + dy * dy
+                  if (d2 < 1) { dx = 0.1; dy = 0.1; d2 = 0.02 }
+                  const f = 2600 / d2
+                  const d = Math.sqrt(d2)
+                  pa.x += (dx / d) * f
+                  pa.y += (dy / d) * f
+                  pb.x -= (dx / d) * f
+                  pb.y -= (dy / d) * f
+                }
+              }
+              for (const e of edges) {
+                const pa = pos.get(e.a)
+                const pb = pos.get(e.b)
+                if (!pa || !pb) continue
+                const dx = pb.x - pa.x
+                const dy = pb.y - pa.y
+                const d = Math.max(1, Math.sqrt(dx * dx + dy * dy))
+                const pull = (d - 70) * 0.02
+                pa.x += (dx / d) * pull
+                pa.y += (dy / d) * pull
+                pb.x -= (dx / d) * pull
+                pb.y -= (dy / d) * pull
+              }
+              for (const p of pos.values()) {
+                p.x = Math.min(W - 12, Math.max(12, p.x))
+                p.y = Math.min(H - 12, Math.max(12, p.y))
+              }
+            }
+            const maxW = Math.max(1, ...edges.map((e) => e.w))
+            return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+              h('p', { style: { fontSize: '11px', opacity: 0.55, margin: 0 } },
+                `节点 ${nodes.length} 个（画前 40）· 边 ${links.length} 条 · 线越粗一起出现得越多`),
+              h('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: '100%', height: 'auto', border: '1px solid rgba(128,128,128,0.2)', borderRadius: '6px' } },
+                ...edges.map((e, i) => {
+                  const pa = pos.get(e.a)
+                  const pb = pos.get(e.b)
+                  if (!pa || !pb) return null
+                  return h('line', {
+                    key: `e${i}`,
+                    x1: pa.x, y1: pa.y, x2: pb.x, y2: pb.y,
+                    stroke: 'currentColor',
+                    strokeOpacity: 0.12 + 0.5 * (e.w / maxW),
+                    strokeWidth: 0.5 + 2 * (e.w / maxW),
+                  })
+                }),
+                ...shown.map((n) => {
+                  const p = pos.get(n.name)
+                  const r = 3 + Math.min(9, Math.sqrt(n.count) * 1.6)
+                  return h('g', { key: n.name },
+                    h('circle', { cx: p.x, cy: p.y, r, fill: 'currentColor', fillOpacity: 0.28, stroke: 'currentColor', strokeOpacity: 0.5 }),
+                    h('text', {
+                      x: p.x, y: p.y - r - 3,
+                      fontSize: 9, textAnchor: 'middle', fill: 'currentColor', fillOpacity: 0.75,
+                    }, n.name),
+                  )
+                }),
+              ),
+            )
+          }
+
+          if (zone === 'spaces') {
+            const list = Array.isArray(data.spaces) ? data.spaces : []
+            if (list.length === 0) return h('p', { style: { fontSize: '12px', opacity: 0.55 } }, '还没有空间记录。')
+            return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+              h('p', { style: { fontSize: '11px', opacity: 0.55, margin: 0 } },
+                `当前空间：${currentSpace || 'default'}。换一个空间后，写进去和想起来的都只看那一格。`),
+              ...list.map((sp) => h('div', {
+                key: sp.id,
+                style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '4px 0', borderBottom: '1px solid rgba(128,128,128,0.15)' },
+              },
+                h('span', { style: { fontSize: '12px' } }, `${sp.id === (currentSpace || 'default') ? '● ' : ''}${sp.id} · ${sp.count} 条`),
+                h('button', {
+                  type: 'button',
+                  disabled: typeof onSwitchSpace !== 'function' || sp.id === (currentSpace || 'default'),
+                  onClick: () => { if (typeof onSwitchSpace === 'function') onSwitchSpace(sp.id) },
+                  style: { border: '1px solid currentColor', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', background: 'transparent', color: 'inherit', cursor: 'pointer', opacity: sp.id === (currentSpace || 'default') ? 0.4 : 0.9 },
+                }, '切到这个空间'),
+              )),
+            )
+          }
+
+          if (zone === 'scenes') {
+            if (items.length === 0) return h('p', { style: { fontSize: '12px', opacity: 0.55 } }, '还没有成段的场景。')
+            return h('ol', { style: { display: 'flex', flexDirection: 'column', gap: '12px', margin: 0, padding: '0 0 0 18px' } },
+              ...items.map((item) => h('li', { key: item.topic, style: { fontSize: '12px', lineHeight: 1.5 } },
+                h('div', { style: { fontSize: '11px', opacity: 0.5, fontFamily: 'monospace' } },
+                  `${item.topic} · ${item.count} 条 · ${fmtTime(item.at)}`),
+                h('pre', {
+                  style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: '2px 0 0', fontFamily: 'inherit', opacity: 0.8 },
+                }, item.body),
+              )))
+          }
+
+          if (items.length === 0) return h('p', { style: { fontSize: '12px', opacity: 0.55 } }, '这条区是空的。')
+          return h('ol', { style: { display: 'flex', flexDirection: 'column', gap: '10px', margin: 0, padding: '0 0 0 18px' } },
+            ...items.map((item) => h('li', { key: String(item.id), style: { fontSize: '12px', lineHeight: 1.5 } },
+              h('div', { style: { fontSize: '11px', opacity: 0.5, fontFamily: 'monospace' } },
+                `${fmtTime(item.at)} · 权重 ${Math.round(item.weight * 10) / 10}${
+                  item.emo.length === 0 ? '' : ` · ${item.emo.map((k) => EMO_TEXT[k] ?? k).join('/')}`
+                }`),
+              h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, item.user),
+              item.assistant === '' ? null
+                : h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', opacity: 0.55 } }, item.assistant),
+              h('div', { style: { display: 'flex', gap: '10px', marginTop: '2px' } },
+                h('button', {
+                  type: 'button',
+                  onClick: async () => {
+                    const next = window.prompt('改成什么？（只改用户侧那条）', item.user)
+                    if (next === null || next.trim() === '') return
+                    await fetch('/dsh-whale-memory/entries/correct', {
+                      method: 'POST',
+                      headers: { 'content-type': 'application/json' },
+                      body: JSON.stringify({ id: item.id, text: next }),
+                    })
+                    setSeq((n) => n + 1)
+                  },
+                  style: { border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '11px', opacity: 0.55, padding: 0, color: 'inherit' },
+                }, '改'),
+                h('button', {
+                  type: 'button',
+                  onClick: async () => {
+                    if (!window.confirm('撤回这条记忆？原件会留在 revisions 里。')) return
+                    await fetch('/dsh-whale-memory/entries/retract', {
+                      method: 'POST',
+                      headers: { 'content-type': 'application/json' },
+                      body: JSON.stringify({ id: item.id }),
+                    })
+                    setSeq((n) => n + 1)
+                  },
+                  style: { border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '11px', opacity: 0.55, padding: 0, color: 'inherit' },
+                }, '撤回'),
+              ),
+            )))
+        })()
 
         return h(
           'section',
@@ -338,15 +549,19 @@ window.__ModuleLoader__.load({
           h(
             'p',
             { style: { fontSize: '11px', opacity: 0.6, margin: '0 0 4px' } },
-            '只读，只是看一眼存了什么。热区是最近还在上下文里的，冷区是压下去、被想起时才取用的。',
+            '只读，只是看一眼存了什么。热区是最近还在上下文里的，冷区是压下去、被想起时才取用的；场景是同一条线索串起来的一段，画像则是从记忆里蒸出来的「我记得的你」。',
           ),
           h(
             'div',
-            { style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0' } },
+            { style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', flexWrap: 'wrap' } },
             tab('hot', '热区'),
             tab('cold', '冷区'),
+            tab('scenes', '场景'),
+            tab('persona', '画像'),
+            tab('graph', '图谱'),
+            tab('spaces', '空间'),
             h('span', { style: { ...metaStyle, marginLeft: '4px' } },
-              data === null ? '' : `${data.total} 条，显示 ${data.shown}`),
+              data === null ? '' : (zone === 'persona' || zone === 'graph' || zone === 'spaces') ? '' : `${data.total ?? 0} 条，显示 ${data.shown ?? items.length}`),
             h('button', {
               type: 'button',
               onClick: () => setSeq((n) => n + 1),
@@ -357,31 +572,53 @@ window.__ModuleLoader__.load({
               },
             }, '刷新'),
           ),
-          failed
-            ? h('p', { style: { fontSize: '12px', opacity: 0.7 } }, '读不到记忆库。')
-            : items.length === 0
-              ? h('p', { style: { fontSize: '12px', opacity: 0.55 } }, data === null ? '读取中…' : '这条区是空的。')
-              : h(
-                'ol',
-                { style: { display: 'flex', flexDirection: 'column', gap: '10px', margin: 0, padding: '0 0 0 18px' } },
-                ...items.map((item) => h(
-                  'li',
-                  { key: String(item.id), style: { fontSize: '12px', lineHeight: 1.5 } },
-                  h(
-                    'div',
-                    { style: { fontSize: '11px', opacity: 0.5, fontFamily: 'monospace' } },
-                    `${fmtTime(item.at)} · 权重 ${Math.round(item.weight * 10) / 10}${
-                      item.emo.length === 0 ? '' : ` · ${item.emo.map((k) => EMO_TEXT[k] ?? k).join('/')}`
-                    }`,
-                  ),
-                  h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, item.user),
-                  item.assistant === ''
-                    ? null
-                    : h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', opacity: 0.55 } }, item.assistant),
-                )),
-              ),
+          h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', padding: '0 0 4px' } },
+            h('input', {
+              value: q,
+              onChange: (e) => setQ(e.target.value),
+              onKeyDown: (e) => { if (e.key === 'Enter') setSeq((n) => n + 1) },
+              placeholder: '搜关键字',
+              style: { flex: '1 1 auto', minWidth: '80px', fontSize: '12px', padding: '2px 6px', borderRadius: '4px', border: '1px solid currentColor', background: 'transparent', color: 'inherit' },
+            }),
+            h('button', {
+              type: 'button',
+              onClick: () => setSeq((n) => n + 1),
+              style: { border: '1px solid currentColor', borderRadius: '6px', padding: '2px 8px', fontSize: '12px', background: 'transparent', color: 'inherit', cursor: 'pointer' },
+            }, '搜'),
+            h('label', { style: { fontSize: '11px', opacity: 0.65, display: 'flex', alignItems: 'center', gap: '3px' } },
+              h('input', { type: 'checkbox', checked: allSpaces, onChange: (e) => setAllSpaces(e.target.checked) }),
+              '全部空间',
+            ),
+          ),
+          body,
         )
       }
+
+      /** 本地日期键：给「今天发了多少条」这类按天统计用。 */
+      const localDayKey = () => {
+        const d = new Date()
+        const p2 = (n) => String(n).padStart(2, '0')
+        return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+      }
+
+      /** 状态里的一个小数字卡片。 */
+      const Stat = (label, value, hint) => h('div', {
+        key: label,
+        style: {
+          border: '1px solid rgba(128,128,128,0.18)',
+          borderRadius: '10px',
+          padding: '8px 10px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '1px',
+          background: 'rgba(128,128,128,0.05)',
+          minWidth: 0,
+        },
+      },
+      h('span', { style: { fontSize: '10px', opacity: 0.5, letterSpacing: '0.04em' } }, label),
+      h('span', { style: { fontSize: '17px', fontWeight: 600, lineHeight: 1.2 } }, value),
+      hint ? h('span', { style: { fontSize: '10px', opacity: 0.45, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, hint) : null,
+      )
 
       const Panel = () => {
         // 两个命名空间，各自一份快照。服务缺席时用占位表单，
@@ -400,6 +637,8 @@ window.__ModuleLoader__.load({
 
         const [memoryStatus, setMemoryStatus] = React.useState(null)
         const [proactiveStatus, setProactiveStatus] = React.useState(null)
+        const [trend, setTrend] = React.useState(null)
+        const [tick, setTick] = React.useState(0)
 
         React.useEffect(() => {
           let alive = true
@@ -411,8 +650,9 @@ window.__ModuleLoader__.load({
           }
           load(STATUS_URL, setMemoryStatus)
           load(PROACTIVE_STATUS_URL, setProactiveStatus)
+          load('/dsh-whale-memory/trend?days=7', setTrend)
           return () => { alive = false }
-        }, [])
+        }, [tick])
 
         if (formOf(NS) === null && formOf(PROACTIVE_NS) === null) {
           return h('p', { style: { fontSize: '13px', opacity: 0.75 } }, '设置服务不可用（DSH 版本偏旧？），参数只能改配置文件。')
@@ -426,42 +666,91 @@ window.__ModuleLoader__.load({
           return h('p', { style: { fontSize: '13px', opacity: 0.75 } }, '这两个插件条目都没有暴露配置，先确认它们已经在 profile 里启用。')
         }
 
-        const statusLine = (text) => h(
-          'p',
-          { style: { fontSize: '12px', opacity: 0.65, margin: '0 0 4px' } },
-          text,
-        )
-
-        const memoryLine = memoryStatus === null
+        const statGrid = memoryStatus === null
           ? null
-          : statusLine(
-            `热区 ${memoryStatus.hot ?? '?'} 条 · 冷区 ${memoryStatus.cold ?? '?'} 条 · 向量${
-              memoryStatus.embedOk ? '正常' : '不可用（已降级）'
-            } · 想起过 ${memoryStatus.stats?.recalled ?? 0} 次 · 抢救 ${memoryStatus.stats?.salvaged ?? 0} 次`,
+          : h('div', {
+            style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))', gap: '8px' },
+          },
+          Stat('热区', `${memoryStatus.hot ?? '?'} 条`),
+          Stat('冷区', `${memoryStatus.cold ?? '?'} 条`),
+          Stat('事实', `${memoryStatus.facts ?? '?'} 条`),
+          Stat('场景', `${memoryStatus.scenes ?? 0} 段`),
+          Stat('空间', `${memoryStatus.spaces ?? 0} 个`, String(memoryStatus.space ?? '')),
+          Stat('向量', memoryStatus.embedOk ? '正常' : '降级'),
+          Stat('想起', `${memoryStatus.stats?.recalled ?? 0} 次`),
+          Stat('蒸馏', `${memoryStatus.stats?.distillCalls ?? 0} 次`),
           )
 
-        const proactiveLine = proactiveStatus === null
-          ? null
-          : statusLine(
-            `主动消息：${proactiveStatus.isQuietHours ? '在免打扰时段' : '不在免打扰时段'} · 今天发了 ${
-              proactiveStatus.state?.dailyCount?.[localDayKey()] ?? 0
-            } 条 · 现在的判断是 ${proactiveStatus.decision?.reason ?? '?'}`,
-          )
+        const footNotes = []
+        if (memoryStatus !== null) {
+          footNotes.push(`抢救 ${memoryStatus.stats?.salvaged ?? 0} · 合并 ${memoryStatus.stats?.merged ?? 0} · 记忆库 ${memoryStatus.dbPath ?? ''}`)
+        }
+        if (trend !== null && Array.isArray(trend.series) && trend.series.length > 0) {
+          footNotes.push(`近 7 天：${trend.series.map((d) => `${d.day.slice(5)} 蒸馏 ${d.distillCalls ?? 0} / 想起 ${d.recalled ?? 0}`).join('　')}`)
+        }
+        if (proactiveStatus !== null) {
+          footNotes.push(`主动消息：${proactiveStatus.isQuietHours ? '免打扰中' : '可发'} · 今天 ${proactiveStatus.state?.dailyCount?.[localDayKey()] ?? 0} 条 · ${proactiveStatus.decision?.reason ?? '?'}`)
+        }
 
         return h(
           'div',
-          { style: { display: 'flex', flexDirection: 'column', gap: '18px', padding: '4px 0' } },
-          memoryLine,
-          proactiveLine,
+          { style: { display: 'flex', flexDirection: 'column', gap: '14px', padding: '6px 0 10px' } },
+          h('header', {
+            style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' },
+          },
+          h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '8px', minWidth: 0 } },
+            h('h2', { style: { fontSize: '16px', margin: 0, fontWeight: 600 } }, '鲸娘记忆'),
+            h('span', { style: { fontSize: '11px', opacity: 0.45, fontFamily: 'monospace' } },
+              `v${memoryStatus?.pluginVersion ?? '?'}`),
+          ),
+          h('button', {
+            type: 'button',
+            onClick: () => setTick((n) => n + 1),
+            style: {
+              border: '1px solid rgba(128,128,128,0.35)',
+              borderRadius: '999px',
+              padding: '2px 10px',
+              fontSize: '11px',
+              background: 'transparent',
+              color: 'inherit',
+              cursor: 'pointer',
+              opacity: 0.75,
+              flexShrink: 0,
+            },
+          }, '刷新'),
+          ),
+          statGrid,
+          ...footNotes.map((text, i) => h('p', {
+            key: `n${i}`,
+            style: { fontSize: '11px', opacity: 0.55, margin: 0, lineHeight: 1.6 },
+          }, text)),
+          h('div', {
+            style: {
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+              gap: '12px',
+              alignItems: 'start',
+            },
+          },
           ...available.map((group) => {
             const form = forms[group.form]
             const snap = snaps[group.form]
             const disabled = !snap.writable
             return h(
               'section',
-              { key: group.title, style: { display: 'flex', flexDirection: 'column' } },
-              h('h3', { style: { fontSize: '13px', margin: '0 0 2px' } }, group.title),
-              h('p', { style: { fontSize: '11px', opacity: 0.6, margin: '0 0 4px' } }, group.hint),
+              {
+                key: group.title,
+                style: {
+                  display: 'flex',
+                  flexDirection: 'column',
+                  border: '1px solid rgba(128,128,128,0.18)',
+                  borderRadius: '10px',
+                  padding: '10px 12px 4px',
+                  minWidth: 0,
+                },
+              },
+              h('h3', { style: { fontSize: '13px', margin: '0 0 2px', fontWeight: 600 } }, group.title),
+              h('p', { style: { fontSize: '11px', opacity: 0.55, margin: '0 0 4px', lineHeight: 1.5 } }, group.hint),
               ...group.fields.map((field) => h(Row, {
                 key: PATH_TEXT(field.path),
                 field,
@@ -473,15 +762,13 @@ window.__ModuleLoader__.load({
               })),
             )
           }),
-          h(EntriesView, { key: 'entries' }),
+          ),
+          h(EntriesView, {
+            key: 'entries',
+            currentSpace: memoryStatus?.space ?? 'default',
+            onSwitchSpace: (name) => writePath(memoryForm, ['space'], String(name)),
+          }),
         )
-      }
-
-      /** 本地时区的今天，和 Host 的 dayKey 对齐（不能用 toISOString，那是 UTC）。 */
-      const localDayKey = () => {
-        const d = new Date()
-        const p2 = (n) => String(n).padStart(2, '0')
-        return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
       }
 
       const slots = ctx.get('slots')

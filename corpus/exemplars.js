@@ -85,7 +85,7 @@ export function judgeExemplar(text) {
 }
 
 async function main() {
-  const db = new DatabaseSync(DB_PATH, { readOnly: true })
+  const db = new DatabaseSync(DB_PATH, { readOnly: true, timeout: 5000 })
   const rows = db.prepare(`
     SELECT sender_name, text, sent_at FROM messages
     WHERE kind='human' ORDER BY sent_at DESC LIMIT 2000

@@ -46,7 +46,7 @@ const MAX_LINES = 12
 const LINE_CAP = 60
 
 async function main() {
-  const db = new DatabaseSync(CORPUS_DB, { readOnly: true })
+  const db = new DatabaseSync(CORPUS_DB, { readOnly: true, timeout: 5000 })
   const since = Date.now() - HOURS * 3600 * 1000
 
   // 只要真人的发言，AI 的不算「群里发生了什么」

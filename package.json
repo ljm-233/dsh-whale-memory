@@ -1,6 +1,6 @@
 {
   "name": "dsh-whale-memory",
-  "version": "0.5.3",
+  "version": "0.27.1",
   "type": "module",
   "private": false,
   "description": "Proactive memory for DeepSeek Harness: emotion-aware recall, real BGE vectors, SQLite storage, and periodic associative rumination. Zero JS dependencies.",
@@ -23,12 +23,13 @@
     "scripts"
   ],
   "scripts": {
-    "check": "node --check lib/index.mjs && node --check client.js && node tests/test-selfcheck.mjs && node tests/test-routes.mjs && node tests/test-client.mjs && node tests/test-new-modules.mjs",
-    "test": "node tests/test-selfcheck.mjs && node tests/test-routes.mjs && node tests/test-client.mjs && node tests/test-new-modules.mjs",
+    "check": "node --check lib/index.mjs && node --check client.js && node tests/test-selfcheck.mjs && node tests/test-routes.mjs && node tests/test-client.mjs && node tests/test-new-modules.mjs && node tests/test-scenes.mjs && node tests/test-fts.mjs && node tests/test-recall.mjs",
+    "test": "node tests/test-selfcheck.mjs && node tests/test-routes.mjs && node tests/test-client.mjs && node tests/test-new-modules.mjs && node tests/test-scenes.mjs && node tests/test-fts.mjs && node tests/test-recall.mjs",
     "ruminate": "node ruminate.js",
     "check:all": "node scripts/check-all.mjs",
     "sync-shared": "node scripts/sync-shared.mjs",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "export": "node scripts/export-memory.mjs"
   },
   "keywords": [
     "dsh-plugin",
@@ -64,6 +65,6 @@
   },
   "author": "ljm-233",
   "engines": {
-    "node": ">=22.5"
+    "node": "^22.19.0 || >=24.0.0"
   }
 }

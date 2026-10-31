@@ -37,6 +37,8 @@ const files = [
   ...globSync('lib/*.mjs', { cwd: root }),
   ...globSync('corpus/lib/*.mjs', { cwd: root }),
   ...globSync('proactive/lib/*.mjs', { cwd: root }),
+  // 客户端 bundle 是单文件、手写的，最容易漏掉「用了却没定义」；一并检查。
+  'client.js',
 ].map((f) => join(root, f))
 
 const result = spawnSync(tsc, [
