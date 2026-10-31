@@ -287,6 +287,29 @@ if (tools.size === 0) {
   console.log('OK 备份')
 }
 
+// ---- 自证：四个数 + 手动跑一班 ----
+{
+  const self = await call('/dsh-whale-memory/selfcheck')
+  assert.equal(self.status, 200)
+  assert.equal(self.body.ok, true, `自证应该可用：${JSON.stringify(self.body)}`)
+  assert.equal(typeof self.body.deskBytes, 'number')
+  assert.equal(typeof self.body.layers.hot, 'number')
+  assert.ok(String(self.body.logFile).endsWith('.md'))
+
+  const first = await post('/dsh-whale-memory/nightly', {})
+  assert.equal(first.status, 200)
+  assert.equal(first.body.ok, true, `夜班应该跑得完：${JSON.stringify(first.body)}`)
+  assert.ok(existsSync(join(dir, '记忆本', '桌面页.md')), '桌面页要落盘')
+  assert.match(readFileSync(join(dir, '日志', `${first.body.day}.md`), 'utf8'), /L1=\d+ L2=\d+/u, '日志末尾要有四数')
+
+  const self2 = await call('/dsh-whale-memory/selfcheck')
+  assert.ok(self2.body.deskBytes > 0, '跑完桌面页应该有字节数')
+
+  assert.equal((await call('/dsh-whale-memory/nightly', 'GET')).status, 405)
+  assert.equal((await call('/dsh-whale-memory/selfcheck', 'POST')).status, 405)
+  console.log('OK 自证与夜班')
+}
+
 console.log('\n全部通过')
 
 
