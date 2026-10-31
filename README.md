@@ -347,3 +347,14 @@ MIT
 - `corpus/`、`proactive/`、`shared/` —— 三个子包，各有 `lib/` 与 `client.js`
 
 `~/.dsh/im/` 只留数据（`memory/`、`backup/`、附件），代码一律进仓库。
+
+## 数据放哪
+
+代码在仓库，**数据全在一个根**：`~/.dsh/miyu/`
+
+- `db/` —— `memory.db`、`pinned.md`（不可改）、`HANDOVER.md`（交接条）、`memory.json`
+- `diary/` —— `whale-diary.md`、`whale-diary-private.md`
+- `notes/` —— `PERSONA.md`、`PREFERENCE.md`、`CONTACTS.md`、`RULES.md`、`USER.md`
+- `backups/` —— 记忆快照与插件原件备份
+
+旧路径（`~/.dsh/whale-memory/memory.db`、`~/.dsh/whale-diary*.md`、`~/.dsh/im/memory/*.md`、`~/.dsh/whale-memory/backups`、`~/.dsh/im/backup`）都留了软链指向这里，删数据只认 `~/.dsh/miyu/` 一处。
