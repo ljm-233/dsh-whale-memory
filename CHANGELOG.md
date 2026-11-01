@@ -1,5 +1,39 @@
 # 更新记录
 
+## 0.28.13
+
+### 联想段和 `memory_recall` 改成六字段证据卡，正文另读
+
+撑爆上下文的从来不是「想起几条」，是每条都把整段原文搬进来。所以命中只给卡。
+
+- `lib/format.mjs`（新增 `shortId` / `sourceTag` / `quoteOf` / `cardScore` / `cardLine`）：
+  一张卡一行、六个字段——`id`（条目 id 后 6 位，非数字 id 用 hash 前 6 位）、
+  `tag`（`对话` / `工具` / `笔记`）、`score`（排序分，一位小数，**不是概率**）、
+  `summary`（≤30 字）、`time`（`MM-DD HH:mm`）、`quote`（查询词在原文里定位，
+  命中位置前后共 12 字的逐字原句，不改写、不加省略号；找不到给开头 12 字）。
+  整卡 >120 字按 `tag → summary → quote` 逐字缩，三个都空了还超就整条丢掉
+- `lib/recall.mjs`：`associate()` 不再拼 `${clamp(u,180)} → ${clamp(a,180)}`，
+  改成每条一张卡；最多 5 条、整段 ≤650 字，位置与 1/3 预算约束不变，缓存机制一字未动
+- `lib/constants.mjs`：`RECALL_LINE_CAP` 180 → **30**（现在是卡的摘要上限）、
+  `RECALL_MAX` 3 → **5**，新增 `RECALL_CARD_MAX=120` / `RECALL_SECTION_CAP=650` /
+  `RECALL_QUOTE_CHARS=12` / `RECALL_PAGE_DEFAULT=2000` / `RECALL_PAGE_MAX=8000`
+- `lib/tools.mjs` 的 `memory_recall`：新增 `detail`（`card` 默认 / `full`）与 `offset`；
+  `limit` 在 card 模式是条数（1-100，默认 20）、在 full 模式是每页字符数（默认 2000、上限 8000）。
+  card 模式只回卡、**不出现原文**（`items[].card`，另带 id/day/zone/weight 便于定位）；
+  full 模式把整段原文按 `offset/limit` 分页，返回带 `total`、`offset`、`text`、`nextOffset`
+  （到末尾为 `null`）。原来 `slice(0,300)` 的截断只在 full 里由分页取代
+- 没动的：`MEMORY_BUDGET_CHARS`（1000，所有会话共用）、`card()` 的同步性与
+  `ctx.systemPrompt.context` 的 order 940、`ctx.compaction`、`lib/salvage.mjs`、
+  writer/nightly/tidy 的删除与分层、DB schema。每轮 3 次限流与「低重合不提示」照旧
+
+### 测试
+
+- `tests/test-recall.mjs`（41 → 76 项）：卡 ≤120 字且六字段齐 / 三种 `tag` 的判定 /
+  `quote` 按查询词定位且找不到时退回首 12 字 / 超长按 `tag→summary→quote` 缩、缩不动就丢 /
+  联想段 ≤5 条且整段 ≤650 字且不含原文 / `memory_recall` 默认只回卡不带原文 /
+  `detail:'full'` 的 `offset`+`limit` 分页、两页接得上、`nextOffset` 到末尾为 `null` /
+  限流与低重合行为不变
+
 ## 0.28.12
 
 ### 事实有有效期了：失效只是不再默认注入，不删行

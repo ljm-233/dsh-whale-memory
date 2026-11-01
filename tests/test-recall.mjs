@@ -14,6 +14,11 @@ const { mkdtempSync, writeFileSync } = await import('node:fs')
 const { tmpdir } = await import('node:os')
 const { join } = await import('node:path')
 const { createRecall } = await import('../lib/recall.mjs')
+const { cardLine } = await import('../lib/format.mjs')
+const { RECALL_CARD_MAX, RECALL_SECTION_CAP } = await import('../lib/constants.mjs')
+
+/** 六字段卡的样子：`#短id 标签 分 MM-DD HH:mm 摘要｜「原句」`。 */
+const CARD_RE = /^#[0-9a-f]{1,6} (对话|工具|笔记) -?\d+\.\d \d{2}-\d{2} \d{2}:\d{2} .+｜「.+」$/u
 
 let pass = 0
 let fail = 0
@@ -173,7 +178,10 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
   await rec.associate('session-assoc-1', ASK)
   const withAssoc = rec.card({ session: { id: 'session-assoc-1' } })
   check('缓存命中时卡片含联想段', withAssoc.includes('和这次有关'), withAssoc.slice(0, 80))
-  check('联想段带上了那条旧事', withAssoc.includes('pre-step'), withAssoc.slice(0, 200))
+  const assocLines = withAssoc.split('\n').filter((l) => l.startsWith('#'))
+    .map((l) => l.replace(/）$/u, ''))
+  check('联想段里是六字段卡', assocLines.length === 1 && CARD_RE.test(assocLines[0]), JSON.stringify(assocLines))
+  check('卡不带整段原文', !withAssoc.includes('那条路被砍掉了'), withAssoc.slice(-120))
 
   // 别的会话不共用同一格缓存
   const other = rec.card({ session: { id: 'session-assoc-other' } })
@@ -207,6 +215,7 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
   const smallCard = small.card({ session: { id: 'session-assoc-2' } })
   check('整卡不超预算', smallCard.length <= 300, String(smallCard.length))
   check('联想段受 1/3 预算约束', smallCard.includes('和这次有关') && !smallCard.includes('尾巴标记3'), smallCard)
+  check('联想段不超 650 字', smallCard.length <= 300, String(smallCard.length))
 }
 
 // ---- 9. 召回命中后升热：w+1 / hits+1 / tier-1 ----
@@ -244,6 +253,125 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
   let wrote = -1
   try { wrote = warmEntries(dead, [id], 12) } catch (error) { threw = error }
   check('写不进去就吞掉，不抛', threw === null && wrote === 0, `${threw} / ${wrote}`)
+}
+
+// ---- 10. 证据卡：六字段齐、≤120 字；超长按 tag→summary→quote 缩，缩不动就丢 ----
+{
+  const row = {
+    id: 1234567,
+    u: '插件的注入点换成 context 之后，pre-step 那条路被砍掉了',
+    a: '嗯，深度联想也一起没了',
+    t: Date.parse('2026-10-31T17:24:00+08:00'),
+    w: 4.24,
+  }
+  const line = cardLine(row, { keyword: '注入点', score: 4.24 })
+  check('卡 ≤120 字', line.length <= RECALL_CARD_MAX, String(line.length))
+  check('六字段齐（id/tag/score/summary/time/quote）', CARD_RE.test(line), line)
+  check('短 id 取后 6 位', line.startsWith('#234567 '), line)
+  check('score 保留一位小数', line.includes(' 4.2 '), line)
+  check('time 是 MM-DD HH:mm', line.includes('10-31 17:24'), line)
+  check('quote 是命中位置前后的逐字原句', line.includes('「' + '插件的注入点换成 con' + '」'), line)
+  check('summary 来自助手侧', line.includes('嗯，深度联想也一起没了'), line)
+
+  // 来源标签
+  check('别的 agent 写的是「工具」', cardLine({ ...row, owner: 'other' }, {}).includes(' 工具 '), cardLine({ ...row, owner: 'other' }, {}))
+  check('（联想）开头的是「笔记」', cardLine({ ...row, u: '（联想）插件重启' }, {}).includes(' 笔记 '), cardLine({ ...row, u: '（联想）插件重启' }, {}))
+  check('普通对话是「对话」', cardLine({ ...row, owner: '' }, {}).includes(' 对话 '), cardLine(row, {}))
+
+  // 缩：先丢 tag，再缩 summary，quote 留到最后
+  const tight = cardLine(row, { keyword: '注入点', max: 40 })
+  check('超长时先缩 tag', tight.length <= 40 && !tight.includes('对话'), tight)
+  check('tag 缩完之后 summary 也缩，quote 还在', tight.includes('嗯｜「插件的注入点换成 con」'), tight)
+  check('缩不动就整条丢掉', cardLine(row, { keyword: '注入点', max: 4 }) === '', cardLine(row, { max: 4 }))
+
+  // 查询词压根没出现：quote 退回首 12 字，但仍然是原句切片，不编
+  const noHit = cardLine(row, { keyword: '完全不一样的词' })
+  check('找不到查询词就给开头那 12 字', noHit.includes('「插件的注入点换成 con」'), noHit)
+}
+
+// ---- 11. 联想段：最多 5 条、整段 ≤650 字 ----
+{
+  const mdb = freshDb()
+  const base = Date.now()
+  for (let i = 0; i < 9; i += 1) {
+    mdb.prepare('INSERT INTO entries (u,a,t,w,emo,vec,hot,tier) VALUES (?,?,?,?,?,?,0,0)')
+      .run(`插件注入点第${i}条：${'很长的旧事'.repeat(30)}尾巴标记${i}`, '嗯', base - i * 3600 * 1000, 4, '[]', null)
+  }
+  const rec = createRecall(depsOf(mdb, { budgetChars: () => 3000 }))
+  const ASK2 = '插件注入点还有问题吗'
+  const section = await rec.associate('session-section', ASK2)
+  const cards = section.split('\n').filter((l) => l !== '')
+  check('联想段最多 5 条', cards.length > 0 && cards.length <= 5, String(cards.length))
+  check('每条都是六字段卡', cards.every((l) => CARD_RE.test(l)), cards[0])
+  check('整段 ≤650 字', section.length <= RECALL_SECTION_CAP, String(section.length))
+  check('段里没有整段原文', !section.includes('尾巴标记'), section.slice(0, 120))
+}
+
+// ---- 12. memory_recall：默认只回卡，detail:full 才给原文并分页 ----
+{
+  const { registerTools } = await import('../lib/tools.mjs')
+  const db2 = freshDb()
+  const longUser = `冷区那条记忆：${'逐字原话'.repeat(40)}片尾`
+  db2.prepare('INSERT INTO entries (u,a,t,w,emo,hot,tier) VALUES (?,?,?,?,?,0,0)')
+    .run(longUser, `助手那侧：${'回应'.repeat(40)}`, Date.now(), 3, '[]')
+
+  const reg2 = new Map()
+  const events2 = new Map()
+  registerTools({
+    on: (name, fn) => events2.set(name, fn),
+    inject: (_deps, cb) => cb({
+      effect: (fn) => fn(),
+      tools: { register: (tool) => reg2.set(tool.name, tool) },
+    }),
+  }, {
+    defineTool: (spec) => spec,
+    db: db2,
+    embedTexts: async () => null,
+    backupNow: () => ({ ok: true }),
+    listBackups: () => [],
+    readPreference: () => '',
+    writePreference: () => '',
+    space: () => 'default',
+  })
+  const recall = reg2.get('memory_recall')
+  const exec = (id) => ({ agent: { session: { id } } })
+
+  // 默认：card
+  const cards = recall.execute({ keyword: '冷区那条记忆' }, exec('s-cards'))
+  check('默认走 card', cards.detail === 'card', String(cards.detail))
+  check('card 里一条卡', cards.items.length === 1 && CARD_RE.test(cards.items[0].card), JSON.stringify(cards.items[0]))
+  check('card 不带原文', cards.items.every((it) => it.user === undefined && it.assistant === undefined), JSON.stringify(cards.items[0]))
+  const cardText = recall.output.render({}, cards)[0].text
+  check('card 渲染里只有卡', cardText.includes('排序分，不是概率') && !cardText.includes('片尾'), cardText)
+  check('card 渲染提示去看全文', cardText.includes("detail:'full'"), cardText)
+
+  // full：按字符分页（限流每会话 3 次，所以每次换个会话）
+  const full = recall.execute({ keyword: '冷区那条记忆', detail: 'full', limit: 200 }, exec('s-full-a'))
+  check('full 带 total', full.detail === 'full' && full.total > 200, String(full.total))
+  check('full 一页正好是 limit 个字符', full.text.length === 200 && full.total > 200, String(full.text.length))
+  check('full 从 0 开始，nextOffset 接着', full.offset === 0 && full.nextOffset === 200, JSON.stringify([full.offset, full.nextOffset]))
+  check('full 第一页就是原文开头', full.text.startsWith('#') && full.text.includes('冷区那条记忆'), full.text.slice(0, 40))
+
+  const mid = recall.execute({ keyword: '冷区那条记忆', detail: 'full', limit: 200, offset: 200 }, exec('s-full-b'))
+  const whole = recall.execute({ keyword: '冷区那条记忆', detail: 'full', limit: 8000 }, exec('s-full-c'))
+  check('offset 生效', mid.offset === 200 && mid.text === whole.text.slice(200, 400), JSON.stringify([mid.offset, mid.text.length]))
+  check('两页接得上', full.text + mid.text === whole.text.slice(0, full.nextOffset + (whole.total - 200)), '拼接对不上')
+  check('limit 超过硬上限就按上限给', whole.text.length === whole.total && whole.total <= 8000, String(whole.total))
+
+  // 末尾：nextOffset 是 null，越界就是空页
+  const tail = recall.execute({ keyword: '冷区那条记忆', detail: 'full', limit: 8000, offset: whole.total }, exec('s-tail'))
+  check('读到末尾 nextOffset 为 null', tail.nextOffset === null && tail.text === '' && tail.offset === whole.total, JSON.stringify(tail).slice(0, 140))
+
+  // 限流和低重合：改造过之后行为不变
+  recall.execute({ keyword: '冷区那条记忆' }, exec('s-lim'))
+  recall.execute({ keyword: '冷区那条记忆' }, exec('s-lim'))
+  recall.execute({ keyword: '冷区那条记忆' }, exec('s-lim'))
+  const limited = recall.execute({ keyword: '冷区那条记忆' }, exec('s-lim'))
+  check('同一会话第 4 次仍被拒', limited.reason === 'rate-limited' && limited.count === 0, JSON.stringify(limited))
+  check('被拒时不带卡', limited.items.length === 0 && limited.detail === 'card', JSON.stringify(limited))
+  const low = recall.execute({ keyword: '完全无关的字眼' }, exec('s-low'))
+  check('低重合不提示再查', low.hint === '', low.hint)
+  check('低重合也可能 0 条', low.count === 0, String(low.count))
 }
 
 console.log(`\n通过 ${pass}，失败 ${fail}`)
