@@ -124,6 +124,17 @@ keep → 蒸馏成一句话进冷区；drop → 丢掉，计 forgotten
 
 恢复永远由人来点。插件只备，不自动回滚——自动回滚会把刚记下的东西一起滚掉。
 
+按天只备一份不够用：白天出了事，只能回到凌晨那份。所以在动库之前还会**强制**再备一份，
+文件名带毫秒时间戳、不覆盖当天那份：
+
+| 时机 | 落在哪 |
+|---|---|
+| 手动梳理（`consolidateNow()`）之前 | `backups/memory-pre-consolidate-<时间戳>.db` |
+| `scripts/memory-tidy.mjs` 真跑之前 | `backups/memory-pre-tidy-<时间戳>.db` |
+
+备不成（`vacuum-failed` / `integrity-failed`）就不动手：梳理直接返回 `{skipped:'backup-failed'}`，
+整理脚本以 exit 3 退出，一条都不删、一条都不改。
+
 ### 能改错
 
 「存查回顾改错」里最容易被跳过的是最后一件。只存不改，记错了就一路错下去。
@@ -153,7 +164,7 @@ node scripts/memory-tidy.mjs --db ~/.dsh/miyu/db/memory.db --dry-run   # 只看�
 node scripts/memory-tidy.mjs --db ~/.dsh/miyu/db/memory.db            # 真跑
 ```
 
-规则：`vec IS NULL` 的条目调本地嵌入服务补上（服务不在就记失败、继续）；最近 7 天且 `w ≥ 3` 的抬进热区；热区硬上限 30 条，超了按 `w` 从低往下降。只改 `vec`/`hot`，不动正文、不删条目。
+规则：`vec IS NULL` 的条目调本地嵌入服务补上（服务不在就记失败、继续）；最近 7 天且 `w ≥ 3` 的抬进热区；热区硬上限 30 条，超了按 `w` 从低往下降。只改 `vec`/`hot`，不动正文、不删条目。真跑之前先强制备份一份（`--dry-run` 不备）。
 
 ### 人格拆两半
 
@@ -299,6 +310,10 @@ systemctl --user enable --now dsh-whale-ruminate.timer
 | `BACKUP_KEEP` | 14 | 备份保留份数 |
 
 这些都能在设置面板里改。`memoryPath`、`archive.dir`、`backup.dir` 例外——路径是启动时读的。
+
+`autoConsolidate`（默认 `false`）：每 6 小时自动梳理（合并重复、删无信息量的、提炼规律）。
+它会 **DELETE 条目**，所以默认一个定时器都不注册，打开后重启插件才生效。手动触发不受这一项限制，
+但同样先备份、删除同样在 `BEGIN IMMEDIATE` 事务里，中途出错整批 `ROLLBACK`。
 
 三个设置项的当前语义（0.28.10）：
 

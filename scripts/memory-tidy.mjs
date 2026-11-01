@@ -10,15 +10,17 @@
  * 只补不删：vec 空着的补上，最近 7 天权重够高的抬进热区，
  * 热区超上限时按权重从低往下降（降级，不是删）。
  * 嵌入服务不在时补向量那步记失败就继续，剩下的步骤照跑。
+ * 真跑之前先强制备份一份（<记忆库>/backups/memory-pre-tidy-<时间戳>.db），备不成就不动库。
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { openDb } from '../lib/db-open.mjs'
+import { createBackup } from '../lib/backup.mjs'
 import { syncHotFromTier, tidyMemory } from '../lib/tidy.mjs'
 import { embedTexts } from '../lib/vector.mjs'
 import { DEFAULT_MEMORY_DIR, DB_FILE, HOT_ZONE_MAX, HOT_PROMOTE_WEIGHT } from '../lib/constants.mjs'
-import { numCfg } from '../lib/shared.mjs'
+import { cfgVal, dayKeyOf, numCfg } from '../lib/shared.mjs'
 
 const args = process.argv.slice(2)
 const flag = (name) => args.includes(name)
@@ -62,6 +64,20 @@ if (!existsSync(dbPath)) {
 
 const db = openDb(dbPath, { timeout: 5000 })
 const dryRun = flag('--dry-run')
+
+// 真跑之前先强制留一份（带时间戳，不覆盖当天那份）：
+// 补向量本身不算写条目，但热区会动，出事故得能回滚。
+if (!dryRun) {
+  const { backupNow } = createBackup({
+    db, memoryDir: dirname(dbPath), cfgVal, config: {}, bumpStat: () => undefined, dayKeyOf,
+  })
+  const b = backupNow({ force: true, label: 'pre-tidy' })
+  if (b.ok !== true) {
+    console.error(`备份失败（${b.reason}${b.detail ? `：${b.detail}` : ''}），这次不动库`)
+    process.exit(3)
+  }
+  console.log(`[backup] ${b.path}（${b.entries} 条）`)
+}
 
 const result = await tidyMemory(db, {
   embedTexts,

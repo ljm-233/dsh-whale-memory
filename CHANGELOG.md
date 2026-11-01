@@ -1,5 +1,45 @@
 # 更新记录
 
+## 0.28.11
+
+### 定时梳理默认关闭：会删条目的事不能自己跑起来
+
+- `lib/index.mjs`：新增配置 `autoConsolidate`（`z.boolean().default(false).volatile()`）。
+  第 643 行那个 6 小时定时器改成 `scheduleConsolidate({ enabled: autoConsolidate(), run })`，
+  **默认返回 `null`，一个定时器都不注册**；打开后重启插件才生效。退出时的 `clearInterval` 加了空值判断
+- `lib/consolidate.mjs`：导出 `scheduleConsolidate()` 与 `CONSOLIDATE_INTERVAL_MS`。
+  注册逻辑抽成纯函数是为了能测——`setInterval` 可注入，测试不用真等 6 小时
+
+### 手动梳理也必须先备份，删除必须成组
+
+- `consolidateNow()` 入口第一件事：`backupNow({ force: true, label: 'pre-consolidate' })`，
+  落成 `backups/memory-pre-consolidate-<毫秒时间戳>.db`。备不成直接返回 `{ skipped: 'backup-failed', detail }`，
+  **一条都不删**；没接 `backupNow` 同样拒绝动手（`detail: 'no-backup'`）
+- 合并 / 删除 / 写规律的整段删改挪进 `BEGIN IMMEDIATE` … `COMMIT`，异常 `ROLLBACK` 并返回
+  `{ error: 'tx-failed', merged: 0, dropped: 0 }`。`vectorConsolidate()` 里 `LENGTH(TRIM(u))<3` 的删除也一并进事务
+- 事务里不留 `await`：要写的向量（合并文本、规律）先算好再进事务，
+  否则回滚会把 `await` 期间别人写的条目一起带走
+- 梳理完记 `meta.consolidatedAt`（毫秒时间戳），`stats.consolidated` 沿用原来的计数
+
+### 备份靠得住
+
+- `lib/backup.mjs`：`backupNow()` 支持 `opts.label`，文件名变成 `memory-<label>-<时间戳>.db`，
+  每次都是新文件、不覆盖当天那份日备份；不传 `label` 行为不变
+- `scripts/memory-tidy.mjs`：真跑之前强制备份 `backups/memory-pre-tidy-<时间戳>.db`，
+  失败就 `exit 3`，不动库；`--dry-run` 不备份
+
+### 文档
+
+- `lib/nightly.mjs`：注释里那句「用 `scripts/memory-tidy.mjs --prune` 手动跑，且必须带 `--yes`」是假的——
+  脚本没有 `--prune` 参数，`settle()` 的 `allowPrune` 也没有调用方传 `true`。改成与现状一致
+- README：补「动库之前强制备份」的时机表、`autoConsolidate` 的语义、`memory-tidy` 先备份
+
+### 测试
+
+- 新增 `tests/test-consolidate.mjs`（16 项）：默认不注册定时器 / 配置缺省也不注册 / `true` 才注册 / 间隔 6 小时；
+  备份失败与没接备份函数时条目数不变；临时库 + 第 2 次 `DELETE` 抛错 → `tx-failed`、条目仍在、
+  连合并的改写也回滚；正常路径照删、记 `consolidatedAt`、每次梳理都新留一份备份不覆盖
+
 ## 0.28.10
 
 ### 联想补回记忆卡：轻查询同步、重检索异步 + 一轮一格缓存
