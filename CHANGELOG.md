@@ -1,3 +1,15 @@
+## 0.28.15
+
+- 新增 `entry_evidence` 表（`entry_id` / `source` / `source_kind` / `created`，索引 `entry_id`）：
+  结论（`entries.a`）与它的原始出处分开放，事后能说清「这条结论是哪句话支撑的」。
+  `CREATE TABLE IF NOT EXISTS`，不迁移、不动 `entries` 现有列。
+- 写入：`lib/writer.mjs` 落库时把本轮用户原话与回复各写一行（`user` / `assistant`，截 500 字），
+  用 `lastInsertRowid` 指回条目；**只在新插入时写**，更新/合并路径不写。写失败吞掉，不拖垮落库。
+- 读取：`memory_recall` 的 `detail:'full'` 每条追加一行「证据：<前 80 字>」，最多两条；
+  `detail:'card'`（默认）完全不动，注入体积不变。
+- 清理：`lib/tidy.mjs` 新增只读的 `countOrphanEvidence(db)`，数 `entry_id` 已不存在的证据行；
+  **不自动清理**，夜班不调用删除。
+
 ## 0.28.14
 
 - 记忆卡新增「我的文件」一行：从 `INDEX.md` 解析文件名与一句话说明（每条截 14 字、最多 12 条、总长 300 字内），让每轮都能看见有哪些文件可翻。
