@@ -24,7 +24,7 @@ const check = (name, cond, extra) => {
 const dir = mkdtempSync(join(tmpdir(), 'whale-recall-'))
 const db = new DatabaseSync(':memory:')
 db.exec(`
-  CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, u TEXT, a TEXT, t INTEGER, w REAL DEFAULT 1, emo TEXT DEFAULT '[]', vec BLOB, hot INTEGER DEFAULT 1, space TEXT DEFAULT 'default');
+  CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, u TEXT, a TEXT, t INTEGER, w REAL DEFAULT 1, emo TEXT DEFAULT '[]', vec BLOB, hot INTEGER DEFAULT 1, space TEXT DEFAULT 'default', hits INTEGER DEFAULT 0, tier INTEGER DEFAULT 0);
   CREATE TABLE facts (id INTEGER PRIMARY KEY AUTOINCREMENT, f TEXT, space TEXT DEFAULT 'default');
   CREATE TABLE diary (day TEXT PRIMARY KEY, text TEXT, created_at INTEGER);
   CREATE TABLE scenes (topic TEXT PRIMARY KEY, body TEXT, entry_ids TEXT, n INTEGER, updated INTEGER, space TEXT DEFAULT 'default');
@@ -79,7 +79,7 @@ check('自唤醒走另一条提示', selfWake !== null && selfWake.text.includes
 // 没有可注入内容时返回 null
 const emptyDb = new DatabaseSync(':memory:')
 emptyDb.exec(`
-  CREATE TABLE entries (id INTEGER PRIMARY KEY, u TEXT, a TEXT, t INTEGER, w REAL, emo TEXT, vec BLOB, hot INTEGER, space TEXT);
+  CREATE TABLE entries (id INTEGER PRIMARY KEY, u TEXT, a TEXT, t INTEGER, w REAL, emo TEXT, vec BLOB, hot INTEGER, space TEXT, hits INTEGER DEFAULT 0, tier INTEGER DEFAULT 0);
   CREATE TABLE facts (id INTEGER PRIMARY KEY, f TEXT, space TEXT DEFAULT 'default');
   CREATE TABLE diary (day TEXT PRIMARY KEY, text TEXT, created_at INTEGER);
   CREATE TABLE scenes (topic TEXT PRIMARY KEY, body TEXT, entry_ids TEXT, n INTEGER, updated INTEGER, space TEXT DEFAULT 'default');

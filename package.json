@@ -1,6 +1,6 @@
 {
   "name": "dsh-whale-memory",
-  "version": "0.28.5",
+  "version": "0.28.6",
   "type": "module",
   "private": false,
   "description": "Proactive memory for DeepSeek Harness: emotion-aware recall, real BGE vectors, SQLite storage, and periodic associative rumination. Zero JS dependencies.",
@@ -23,13 +23,14 @@
     "scripts"
   ],
   "scripts": {
-    "check": "node --check lib/index.mjs && node --check client.js && node tests/test-selfcheck.mjs && node tests/test-routes.mjs && node tests/test-client.mjs && node tests/test-new-modules.mjs && node tests/test-scenes.mjs && node tests/test-desk.mjs && node tests/test-fts.mjs && node tests/test-recall.mjs && node tests/test-handover.mjs",
-    "test": "node tests/test-selfcheck.mjs && node tests/test-routes.mjs && node tests/test-client.mjs && node tests/test-new-modules.mjs && node tests/test-scenes.mjs && node tests/test-desk.mjs && node tests/test-fts.mjs && node tests/test-recall.mjs && node tests/test-handover.mjs",
+    "check": "node --check lib/index.mjs && node --check client.js && node tests/test-selfcheck.mjs && node tests/test-routes.mjs && node tests/test-client.mjs && node tests/test-new-modules.mjs && node tests/test-scenes.mjs && node tests/test-desk.mjs && node tests/test-fts.mjs && node tests/test-recall.mjs && node tests/test-handover.mjs && node tests/test-memory-tidy.mjs",
+    "test": "node tests/test-selfcheck.mjs && node tests/test-routes.mjs && node tests/test-client.mjs && node tests/test-new-modules.mjs && node tests/test-scenes.mjs && node tests/test-desk.mjs && node tests/test-fts.mjs && node tests/test-recall.mjs && node tests/test-handover.mjs && node tests/test-memory-tidy.mjs",
     "ruminate": "node ruminate.js",
     "check:all": "node scripts/check-all.mjs",
     "sync-shared": "node scripts/sync-shared.mjs",
     "smoke": "node scripts/smoke.mjs",
-    "export": "node scripts/export-memory.mjs"
+    "export": "node scripts/export-memory.mjs",
+    "tidy": "node scripts/memory-tidy.mjs"
   },
   "keywords": [
     "dsh-plugin",
