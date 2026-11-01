@@ -13,6 +13,8 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)))
 
 const steps = [
   ['共用工具副本', ['node', [join(root, 'scripts', 'sync-shared.mjs'), '--check']]],
+  // 装进 profile 的那份和仓库一致吗：不一致说明改了没同步，重启也不会生效。
+  ['安装副本一致', ['node', [join(root, 'scripts', 'verify-install.mjs')]]],
   ['未定义名字', ['node', [join(root, 'scripts', 'lint-undefined.mjs')]], true],
   ['主插件 语法+用例', ['node', [join(root, 'lib', 'index.mjs')]]],
   ['主插件 selfcheck', ['node', [join(root, 'tests', 'test-selfcheck.mjs')]]],

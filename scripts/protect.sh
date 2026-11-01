@@ -4,6 +4,7 @@
 # 什么时候跑：dsh 升级后 / 装新插件后 / 发现某个 status 端点 404 / 重启前。
 # 幂等，可反复跑。
 set -u
+FAILED=0
 DSH_HOME="${HOME}/.dsh"
 PROFILE="${DSH_HOME}/profiles/web"
 NM="${PROFILE}/node_modules"
@@ -22,8 +23,13 @@ cp -a "${DSH_HOME}/whale-memory/HANDOVER.md" "$BAK/HANDOVER.md" 2>/dev/null
 echo "   -> $BAK"
 
 echo "== 2. 装回我自己的三个插件 =="
+# 这一步同时是「改完代码之后那条命令」：复制完立刻逐文件校验。
+# 0.28.7 的教训：只改仓库不同步，设置页永远看不到新东西，重启也没用。
 node "${REPO}/scripts/install-local.mjs" 2>&1 | sed 's/^/   /'
-
+if ! node "${REPO}/scripts/verify-install.mjs" >/dev/null 2>&1; then
+  echo "   !! 副本和仓库不一致 —— 见 docs/同步安装副本.md"
+  FAILED=1
+fi
 echo "== 3. 检查第三方插件目录 =="
 declare -A REPOS=(
   [dsh-bili-whale]="https://github.com/Alterssss/dsh-bili-whale.git"
@@ -66,6 +72,11 @@ for extra in patch-wakeword.py patch-wakeword-cn.py patch-botfilter.py patch-bot
   [ -f "${PATCHES}/$extra" ] && python3 "${PATCHES}/$extra" 2>&1 | sed "s/^/   [$extra] /"
 done
 
-echo "== 5. 自检 =="
+echo "== 5. 自检（含副本一致性）=="
+node "${REPO}/scripts/verify-install.mjs" 2>&1 | tail -6 | sed 's/^/   /'
 node "${REPO}/scripts/check-all.mjs" 2>&1 | tail -3 | sed 's/^/   /'
+if [ "${FAILED:-0}" = "1" ]; then
+  echo "完成，但有失败项（见上）。备份在 $BAK"
+  exit 1
+fi
 echo "完成。重启 dsh 后生效；备份在 $BAK"

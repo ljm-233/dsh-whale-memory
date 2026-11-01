@@ -3,7 +3,7 @@
  * 跑法：node tests/test-scenes.mjs
  */
 import { DatabaseSync } from 'node:sqlite'
-import { rebuildScenes, matchScenes } from '../lib/scenes.mjs'
+import { rebuildScenes, matchScenes, deleteScene, sceneHitMap } from '../lib/scenes.mjs'
 import { cueWords, rrf } from '../lib/language.mjs'
 import { distillPersona, rebuildPersona, readPersona } from '../lib/persona.mjs'
 import { rebuildGraph, neighbors, entitiesIn } from '../lib/graph.mjs'
@@ -106,6 +106,23 @@ const workHit = matchScenes(db, { text: '部署脚本', space: 'work', limit: 1 
 const defHit = matchScenes(db, { text: '部署脚本', space: 'default', limit: 1 })
 check('work 空间能匹配到', workHit.length === 1)
 check('default 空间看不到 work 的场景', defHit.length === 0)
+
+// 11) 触发时间：真被用上的场景才记一笔
+const hitRows = matchScenes(db, { text: '部署脚本', space: 'work', limit: 1 })
+const hitMap = sceneHitMap(db)
+check('触发写进 meta', hitRows.length === 1 && hitMap.get(`work\t${hitRows[0].topic}`) > 0)
+check('没触发的场景没有时间', (sceneHitMap(db).get('default\tnever') ?? 0) === 0)
+
+// 12) 手动删场景：留墓碑，下次重建不再长回来
+db.prepare("DELETE FROM meta WHERE k LIKE 'scenesMaxId:%'").run()
+const target = db.prepare('SELECT topic FROM scenes WHERE space=? LIMIT 1').get('default')
+check('删之前有场景', target !== undefined)
+const del = deleteScene(db, { topic: target.topic, space: 'default' })
+check('删除成功', del.ok === true && del.deleted === 1)
+check('空主题拒掉', deleteScene(db, { topic: '  ' }).ok === false)
+rebuildScenes(db, { minCluster: 2 })
+check('删掉的不再重建', db.prepare('SELECT 1 x FROM scenes WHERE topic=?').get(target.topic) === undefined)
+check('墓碑记在 meta', String(db.prepare("SELECT v FROM meta WHERE k='sceneMuted:default:' || ?").get(target.topic)?.v ?? '') !== '')
 
 console.log(`\n通过 ${pass}，失败 ${fail}`)
 if (fail > 0) process.exit(1)

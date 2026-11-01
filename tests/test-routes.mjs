@@ -169,6 +169,72 @@ const post = (path, body) => new Promise((ok) => {
   console.log('OK 日记')
 }
 
+// ---- 场景：条数 / 最近触发 / 手动删一条 ----
+{
+  const seed = new DatabaseSync(join(dir, 'memory.db'))
+  const at = Date.now()
+  seed.prepare('INSERT OR REPLACE INTO scenes (topic, body, entry_ids, n, updated, space) VALUES (?,?,?,?,?,?)')
+    .run('bot', '- 群里 bot 不回\n- 重打三个补丁', '[1,2]', 2, at, 'default')
+  seed.prepare('INSERT OR REPLACE INTO scenes (topic, body, entry_ids, n, updated, space) VALUES (?,?,?,?,?,?)')
+    .run('加班', '- 今天好累\n- 那就早点睡', '[3,4]', 2, at - 1000, 'default')
+  seed.prepare("INSERT OR REPLACE INTO meta (k, v) VALUES ('sceneHit:default:bot', ?)").run(String(at - 500))
+  seed.close()
+
+  const list = await call('/dsh-whale-memory/scenes')
+  assert.equal(list.status, 200)
+  assert.equal(list.body.total, 2)
+  const bot = list.body.items.find((it) => it.topic === 'bot')
+  assert.equal(bot.count, 2, '场景要报「多少条记忆」')
+  assert.equal(bot.lastHit, at - 500, '「最近一次触发」从 meta 读回来')
+  assert.equal(list.body.items.find((it) => it.topic === '加班').lastHit, 0, '没触发过就是 0，不编时间')
+  assert.equal((await call('/dsh-whale-memory/scenes', 'DELETE')).status, 405, '列表只读')
+
+  const gone = await post('/dsh-whale-memory/scenes/delete', { topic: 'bot', space: 'default' })
+  assert.equal(gone.status, 200)
+  assert.deepEqual({ ok: gone.body.ok, deleted: gone.body.deleted }, { ok: true, deleted: 1 })
+  assert.equal((await call('/dsh-whale-memory/scenes')).body.total, 1, '删掉就少一条')
+  assert.equal((await post('/dsh-whale-memory/scenes/delete', {})).status, 400, '空主题拒掉')
+  const left = new DatabaseSync(join(dir, 'memory.db'))
+  assert.equal(left.prepare("SELECT COUNT(*) c FROM meta WHERE k='sceneMuted:default:bot'").get().c, 1, '留个墓碑，重建不再长回来')
+  left.close()
+  console.log('OK 场景列表与删除')
+}
+
+// ---- 画像：桌面页旁证 + 笔记时间 + 重蒸桌面页 ----
+{
+  const persona = await call('/dsh-whale-memory/persona')
+  assert.equal(persona.status, 200)
+  assert.ok(Array.isArray(persona.body.notes?.files), '画像面板要能拿到 notes 文件列表')
+  assert.equal(typeof persona.body.notes.dir, 'string')
+
+  const desk = await post('/dsh-whale-memory/desk', {})
+  assert.equal(desk.status, 200)
+  assert.equal(desk.body.ok, true, '重蒸桌面页要成功')
+  assert.ok(desk.body.bytes > 0, '重蒸出来的桌面页不能是空的')
+  assert.ok(existsSync(desk.body.path), '桌面页要真的落盘')
+
+  const after = await call('/dsh-whale-memory/persona')
+  assert.ok(after.body.deskAt > 0, '重蒸后能读出生成时间')
+  assert.ok(after.body.deskBytes > 0, '重蒸后能读出字节数')
+  assert.equal((await call('/dsh-whale-memory/desk')).status, 405, '只有 POST 能蒸')
+  console.log('OK 画像与桌面页')
+}
+
+// ---- 图谱：超过 200 个点截断，但总数照实报 ----
+{
+  const seed = new DatabaseSync(join(dir, 'memory.db'))
+  const ins = seed.prepare('INSERT OR REPLACE INTO entities (name, space, n, updated) VALUES (?,?,?,?)')
+  for (let i = 0; i < 260; i += 1) ins.run(`实体${i}`, 'default', 3 + i, Date.now())
+  seed.close()
+
+  const g = await call('/dsh-whale-memory/graph')
+  assert.equal(g.status, 200)
+  assert.equal(g.body.nodes.length, 200, '最多给 200 个点')
+  assert.equal(g.body.total, 260, '总数照实报')
+  assert.equal(g.body.omitted, 60, '省略了多少要说清楚')
+  console.log('OK 图谱截断')
+}
+
 // ---- 记忆工具：查与改错 ----
 if (tools.size === 0) {
   console.log('SKIP 记忆工具（这台机器上找不到 @deepseek-ai/dsh-tools）')

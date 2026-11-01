@@ -354,6 +354,9 @@ window.__ModuleLoader__.load({
         const [seq, setSeq] = React.useState(0)
         const [q, setQ] = React.useState('')
         const [allSpaces, setAllSpaces] = React.useState(false)
+        // 画像面板：重蒸桌面页时的忙标记；图谱：点中的那个点，和它的一句话原文。
+        const [deskBusy, setDeskBusy] = React.useState(false)
+        const [nodePick, setNodePick] = React.useState(null)
 
         const urlOf = (z) => {
           const extra = `&keyword=${encodeURIComponent(q)}&all=${allSpaces ? 1 : 0}`
@@ -403,14 +406,51 @@ window.__ModuleLoader__.load({
 
           if (zone === 'persona') {
             const text = String(data.text ?? '')
-            return text === ''
-              ? h('p', { style: { fontSize: '12px', opacity: 0.55 } }, '还没有画像，等下一次梳理。')
-              : h('pre', {
-                style: {
-                  fontSize: '12px', lineHeight: 1.6, whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word', margin: 0, fontFamily: 'inherit', opacity: 0.85,
-                },
-              }, text)
+            const deskAt = Number(data.deskAt ?? 0)
+            const files = Array.isArray(data.notes?.files) ? data.notes.files : []
+            const notesDir = String(data.notes?.dir ?? '')
+            return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' } },
+                h('span', { style: metaStyle },
+                  deskAt > 0
+                    ? `桌面页 ${data.deskBytes ?? 0} 字节 · 生成于 ${fmtTime(deskAt)}`
+                    : '桌面页还没生成过'),
+                h('button', {
+                  type: 'button',
+                  disabled: deskBusy,
+                  title: '用现有记忆重蒸一次桌面页，不调模型',
+                  onClick: () => {
+                    if (deskBusy) return
+                    setDeskBusy(true)
+                    // 走现成的 /desk 端点（夜班同一套 buildDesk），回来再读一次画像。
+                    fetch('/dsh-whale-memory/desk', { method: 'POST' })
+                      .then((res) => res.json())
+                      .then(() => setSeq((n) => n + 1))
+                      .catch(() => undefined)
+                      .finally(() => setDeskBusy(false))
+                  },
+                  style: {
+                    border: '1px solid currentColor', borderRadius: '6px', padding: '2px 10px',
+                    fontSize: '11px', background: 'transparent', color: 'inherit',
+                    cursor: deskBusy ? 'progress' : 'pointer', opacity: deskBusy ? 0.5 : 0.85,
+                  },
+                }, deskBusy ? '蒸着…' : '重新生成桌面页'),
+              ),
+              files.length === 0
+                ? h('p', { style: { fontSize: '11px', opacity: 0.55, margin: 0 } },
+                  notesDir === '' ? '没找到画像笔记目录。' : `画像笔记还没写：${notesDir}`)
+                : h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px 12px' } },
+                  ...files.map((f) => h('span', { key: f.name, style: metaStyle },
+                    `${f.name} · ${fmtTime(f.mtime)}`))),
+              text === ''
+                ? h('p', { style: { fontSize: '12px', opacity: 0.55 } }, '还没有画像，等下一次梳理。')
+                : h('pre', {
+                  style: {
+                    fontSize: '12px', lineHeight: 1.6, whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word', margin: 0, fontFamily: 'inherit', opacity: 0.85,
+                  },
+                }, text),
+            )
           }
 
           if (zone === 'graph') {
@@ -420,6 +460,9 @@ window.__ModuleLoader__.load({
             const W = 560
             const H = 320
             const shown = nodes.slice(0, 40)
+            // 库里可能几百个点，页面只画前 40；剩下的老实报个数，别假装画全了。
+            const total = Number(data.total ?? nodes.length)
+            const omitted = Math.max(0, total - shown.length)
             const names = new Set(shown.map((n) => n.name))
             const edges = links.filter((e) => names.has(e.a) && names.has(e.b))
             // 便宜的三段式布局：圆上初始 → 斥力推开 → 边当弹簧拉近。60 个点以内够用，不引依赖。
@@ -465,9 +508,20 @@ window.__ModuleLoader__.load({
               }
             }
             const maxW = Math.max(1, ...edges.map((e) => e.w))
+            /** 点一下节点：用现成的 entries 搜索取它的一条原文，不新开查询逻辑。 */
+            const pick = (name) => {
+              setNodePick({ name, text: '读取中…' })
+              fetch(`/dsh-whale-memory/entries?zone=cold&limit=1&all=1&keyword=${encodeURIComponent(name)}`, { headers: { accept: 'application/json' } })
+                .then((res) => (res.ok ? res.json() : null))
+                .then((json) => {
+                  const one = (json?.items ?? [])[0]
+                  setNodePick({ name, text: one === undefined ? '这条还没有落库的原文。' : String(one.user ?? '').slice(0, 90) })
+                })
+                .catch(() => setNodePick({ name, text: '读不到。' }))
+            }
             return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
               h('p', { style: { fontSize: '11px', opacity: 0.55, margin: 0 } },
-                `节点 ${nodes.length} 个（画前 40）· 边 ${links.length} 条 · 线越粗一起出现得越多`),
+                `节点 ${total} 个（画前 ${shown.length}${omitted > 0 ? `，已省略 ${omitted} 个` : ''}）· 边 ${links.length} 条 · 线越粗一起出现得越多 · 点一下看点相关的原文`),
               h('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: '100%', height: 'auto', border: '1px solid rgba(128,128,128,0.2)', borderRadius: '6px' } },
                 ...edges.map((e, i) => {
                   const pa = pos.get(e.a)
@@ -484,8 +538,13 @@ window.__ModuleLoader__.load({
                 ...shown.map((n) => {
                   const p = pos.get(n.name)
                   const r = 3 + Math.min(9, Math.sqrt(n.count) * 1.6)
-                  return h('g', { key: n.name },
-                    h('circle', { cx: p.x, cy: p.y, r, fill: 'currentColor', fillOpacity: 0.28, stroke: 'currentColor', strokeOpacity: 0.5 }),
+                  const picked = nodePick !== null && nodePick.name === n.name
+                  return h('g', {
+                    key: n.name,
+                    onClick: () => pick(n.name),
+                    style: { cursor: 'pointer' },
+                  },
+                    h('circle', { cx: p.x, cy: p.y, r, fill: 'currentColor', fillOpacity: picked ? 0.55 : 0.28, stroke: 'currentColor', strokeOpacity: picked ? 0.9 : 0.5 }),
                     h('text', {
                       x: p.x, y: p.y - r - 3,
                       fontSize: 9, textAnchor: 'middle', fill: 'currentColor', fillOpacity: 0.75,
@@ -493,6 +552,10 @@ window.__ModuleLoader__.load({
                   )
                 }),
               ),
+              nodePick === null
+                ? null
+                : h('p', { style: { fontSize: '11px', opacity: 0.75, margin: 0, lineHeight: 1.5 } },
+                  `${nodePick.name}：${nodePick.text}`),
             )
           }
 
@@ -518,11 +581,33 @@ window.__ModuleLoader__.load({
           }
 
           if (zone === 'scenes') {
-            if (items.length === 0) return h('p', { style: { fontSize: '12px', opacity: 0.55 } }, '还没有成段的场景。')
+            if (items.length === 0) {
+              // 空列表不是错误：说清「为什么现在还没有」，比一句「空」有用。
+              return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+                h('p', { style: { fontSize: '12px', opacity: 0.7, margin: 0 } }, '还没有成段的场景。'),
+                h('p', { style: { fontSize: '11px', opacity: 0.5, margin: 0, lineHeight: 1.6 } },
+                  '同一个线索词至少要串起两条记忆才会成一段：先把话攒着，夜班梳理完（或右上「刷新」）就会出现。刚删掉的那一段不会自己长回来。'))
+            }
             return h('ol', { style: { display: 'flex', flexDirection: 'column', gap: '12px', margin: 0, padding: '0 0 0 18px' } },
-              ...items.map((item) => h('li', { key: item.topic, style: { fontSize: '12px', lineHeight: 1.5 } },
-                h('div', { style: { fontSize: '11px', opacity: 0.5, fontFamily: 'monospace' } },
-                  `${item.topic} · ${item.count} 条 · ${fmtTime(item.at)}`),
+              ...items.map((item) => h('li', { key: `${item.space ?? ''}:${item.topic}`, style: { fontSize: '12px', lineHeight: 1.5 } },
+                h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px' } },
+                  h('span', { style: { fontSize: '11px', opacity: 0.5, fontFamily: 'monospace' } },
+                    `${item.topic} · ${item.count ?? 0} 条记忆 · ${(item.lastHit ?? 0) > 0 ? `最近触发 ${fmtTime(item.lastHit)}` : '还没被触发过'}`),
+                  h('button', {
+                    type: 'button',
+                    title: '删掉这一段（原文还在记忆里）',
+                    onClick: async () => {
+                      if (!window.confirm(`删掉场景「${item.topic}」？原文不会丢，只是这一段不再被当作一段经历取用。`)) return
+                      await fetch('/dsh-whale-memory/scenes/delete', {
+                        method: 'POST',
+                        headers: { 'content-type': 'application/json' },
+                        body: JSON.stringify({ topic: item.topic, space: item.space ?? 'default' }),
+                      })
+                      setSeq((n) => n + 1)
+                    },
+                    style: { border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '11px', opacity: 0.55, padding: 0, color: 'inherit', flexShrink: 0 },
+                  }, '删'),
+                ),
                 h('pre', {
                   style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: '2px 0 0', fontFamily: 'inherit', opacity: 0.8 },
                 }, item.body),
@@ -578,7 +663,7 @@ window.__ModuleLoader__.load({
           h(
             'p',
             { style: { fontSize: '11px', opacity: 0.6, margin: '0 0 4px' } },
-            '只读，只是看一眼存了什么。热区是最近还在上下文里的，冷区是压下去、被想起时才取用的；场景是同一条线索串起来的一段，画像则是从记忆里蒸出来的「我记得的你」。',
+            '只读，只是看一眼存了什么。热区是最近还在上下文里的，冷区是压下去、被想起时才取用的；场景是同一条线索串起来的一段（可以单条删掉，原文不丢），画像则是从记忆里蒸出来的「我记得的你」。',
           ),
           h(
             'div',

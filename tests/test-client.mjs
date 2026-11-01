@@ -148,6 +148,7 @@ for (const text of [
 ]) {
   assert.ok(html.includes(text), `页面里应该出现「${text}」`)
 }
+assert.ok(html.includes('可以单条删掉'), '场景那一块要说明「单条能删、原文不丢」')
 assert.ok(html.includes('value="1000"'), '应该渲染出当前值 1000')
 assert.ok(html.includes('budgetChars · 已改'), '用户改过的项要标出来')
 assert.ok(html.includes('archive.notify · 已改'), '嵌套字段的覆盖标记也要认')

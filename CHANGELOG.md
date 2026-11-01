@@ -1,5 +1,37 @@
 # 更新记录
 
+## 0.28.8
+
+### 同步安装副本：一条命令 + 强制校验（0.28.7 事故的收尾）
+
+- 事故：0.28.7 的「冷热分层」只加进了仓库 `client.js`，没同步进
+  `~/.dsh/profiles/web/node_modules/dsh-whale-memory`。dsh 读的是副本，于是设置页
+  看不到这一组，**重启也没用**（重启加载的还是那份旧文件）。同一次比对还查出
+  `lib/tidy.mjs` 整个缺失、`lib/recall.mjs`/`index.mjs`/`shared.mjs`/`constants.mjs` 全旧，
+  也就是 0.28.6 的记忆分层从没在运行实例里生效过
+- `scripts/install-local.mjs`：复制完立刻逐文件比对（`client.js`、`lib/**`、`package.json`、
+  `cordis.patch.yml`、`README.md`），不一致就列出文件名并 `exit 1`；仍是幂等的
+- 新增 `scripts/verify-install.mjs`：只校验不动文件，支持 `--profile` / `--json`，
+  副本或 profile 不存在时打 `SKIP` 并返回 0
+- `scripts/check-all.mjs` 第二步接入该校验；`scripts/protect.sh` 装完再校验一次，
+  失败记 `FAILED=1` 并最终 `exit 1`
+- `docs/同步安装副本.md`：一句话结论 + 一条命令 + 排查顺序
+
+### 设置页三块面板
+
+- **场景**：空列表给出「为什么还没有」的说明；每条显示「N 条记忆 · 最近触发 X」，
+  触发时间来自 `meta` 的 `sceneHit:*`（`matchScenes` 真命中时写，不编）；
+  可以单条删除，`window.confirm` 二次确认，删完在 `meta` 留 `sceneMuted:*` 墓碑，
+  下次重建不会自己长回来。新端点 `POST /dsh-whale-memory/scenes/delete`
+- **画像**：显示桌面页字节数与生成时间，并列出 `notes/*.md` 的修改时间
+  （默认 `~/.dsh/miyu/notes`，也认 `notes/` 旁边那两种布局）；
+  新增「重新生成桌面页」按钮 → `POST /dsh-whale-memory/desk`，走夜班同一套
+  `buildDesk`/`writeDeskFile`，不调模型、不并入记忆
+- **图谱**：最多返回 200 个点并带回 `total`/`omitted`，页面画前 40 个，
+  其余显示「已省略 N 个」；点节点用现成的 `entries` 搜索取一条原文（不新造查询）
+- `tests/test-scenes.mjs` 补 6 项（触发记入 meta、删除留墓碑、重建不复活），
+  `tests/test-routes.mjs` 补三组（场景/画像桌面页/图谱截断）
+
 ## 0.28.7
 
 ### 记忆分层三参数进设置页
