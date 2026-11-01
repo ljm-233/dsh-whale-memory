@@ -61,7 +61,7 @@ window.__ModuleLoader__.load({
       {
         form: 'memory',
         title: '主动联想',
-        hint: '它会不会自己想起旧事。门槛调高，它就安静一些。',
+        hint: '它会不会自己想起旧事。门槛调高，它就安静一些。这三项只管记忆卡里的「和这次有关」那一段，不管 memory_recall 工具。',
         fields: [
           { path: ['recallMax'], label: '每轮最多想起几条', kind: 'int', min: 0, max: 50 },
           { path: ['recallThreshold'], label: '想起门槛', kind: 'num', min: 0, max: 1000 },

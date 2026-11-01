@@ -1,5 +1,71 @@
 # 更新记录
 
+## 0.28.10
+
+### 联想补回记忆卡：轻查询同步、重检索异步 + 一轮一格缓存
+
+- `lib/recall.mjs`：新增 `associate(sessionId, userText)`（async）。它按情绪词、线索词、
+  向量余弦给冷区条目打分（沿用 `scoreMemory` + 时效衰减 + `tier` 惩罚 + 门槛），
+  取前 `recallMax` 条拼成一段。**算一次就够**：结果按 `session id` 存进一张最多 8 格的小 Map
+- `card()` 只同步读缓存：有当前轮的联想段就并进卡片，放在热区之前；没有就整段跳过。
+  绝不 await、绝不查向量、绝不打嵌入服务——card 每步组装都跑，这里必须便宜
+- 缓存失效有三道：`associate()` 一进来就 `turn + 1` 并清空 `lines`（换用户消息即作废）；
+  算的过程中又来了新消息（`turn` 变了）那一份直接丢掉；`at` 超过 10 分钟也丢
+- 限额照旧：整卡仍受 `budgetChars()` 约束，联想段最多占其 **1/3**
+- `lib/index.mjs`：`session/event` 收到真人 `user/message` 时 fire-and-forget 调
+  `associate()`；`createRecall` 多接 `recallMax` / `recallThreshold` / `tierPenalty`
+
+### 恢复升热：召回命中就浮上来
+
+- `lib/tools.mjs` 新增导出 `warmEntries(db, ids, weightMax)`：
+  `w = MIN(w + 1, weightMax)`、`hits = hits + 1`、`tier = MAX(tier - 1, 0)`，
+  一条一次、一个事务、失败 `ROLLBACK` 后吞掉（召回结果不能因为记不上计数就丢）
+- `memory_recall` 的 `execute` 在拿到 `rows` 后调用它；放在 tools 里而不是 `card()` 里，
+  因为 card 是只读路径，每步都会跑
+- 三个设置项的语义写清（README + 设置页提示）：`recallMax` / `recallThreshold` 只管
+  记忆卡里的联想段；`tierPenalty` 参与联想段排序（`w ≥ 8` 免罚），当前版本生效
+
+### 测试
+
+- `tests/test-recall.mjs` 新增：缓存命中时卡片含联想段、别的会话不复用、
+  用户消息不同则缓存不复用、超 TTL 不出现、整卡不超预算且联想段 ≤ 1/3、
+  以及升热的 w/hits/tier 变化、同 id 去重、w 封顶、坏库不抛
+- 通过条数：29 → 39（`tests/test-recall.mjs`）
+
+## 0.28.9
+
+### 记忆卡换注入点：从「每轮 prepend 一条 user 消息」改成 runtime-context
+
+- `lib/index.mjs`：新增 `ctx.systemPrompt.context`（`plugin:dsh-whale-memory:memory`，
+  `order: 940`，`interpolate: false`）。DSH 会把 context 物化成 user 角色的 runtime-context
+  快照，**每步组装时现算、压缩冲掉后重新投**——这才是「擦不掉」的那一层
+- 删掉 `agent/pre-step` 里 prepend 记忆消息的分支：同一条记忆不会再在一轮里出现两份，
+  群里/日志里也不再冒出「记忆注入 N 段」那条 notice
+- `lib/recall.mjs`：`build`（async）→ `card`（**纯同步**）。只读 sqlite 和文件
+  （声音、交接条、日记、事实、热区、私聊的群摘要），不联网、不调模型。
+  同步层取不到数据就返回空串，不抛错、不阻断对话；老 harness 没有 `context()` 就跳过注册
+- 卡片正文缓存一次文本比对再记 `injectChars`，否则每步组装会把统计刷成几倍
+- 向量主动联想不再在注入路径里做（`text` 必须同步），深查交给 `memory_recall` 工具
+
+### 召回限流（防爆三件套）
+
+- `lib/tools.mjs` `memory_recall`：一条人类消息之间最多 3 次，第 4 次直接回
+  「这轮已经查够了，先用手上的」，不再翻库
+- 计数在 `session/event` 收到新的用户消息时清零（`lib/tools.mjs` 自己挂监听）
+- 命中内容与查询词重合度 < 20% 时不再追一句「要不要再查」，只在真相关且还有额度时提示
+- 字节上限沿用原来的（每轮注入 1000 字、每条渲染 300 字截断）
+
+### 测试
+
+- `tests/test-recall.mjs` 重写：空库给空串且不抛、库坏掉不抛、缺 agent 不炸、
+  预算卡住不溢出、同文本只记一次账
+- `tests/test-recall.mjs` 新增限流段：第 1 次照常查、第 4 次被拒、
+  重合度低不给提示、新消息后计数归零
+- `tests/test-routes.mjs`：钉住 context 的 name/order/interpolate、空库返回空串、
+  以及「不再注册 pre-step 注入钩子」
+- `tests/test-memory-tidy.mjs`：删掉召回写 hits/tier 那一段（那条路径已经不写库了）
+
+
 ## 0.28.8
 
 ### 同步安装副本：一条命令 + 强制校验（0.28.7 事故的收尾）

@@ -2,8 +2,10 @@
  * 库务整理 + 召回计数的回归：不联网、不碰真实记忆库。
  *
  * 覆盖：补向量（服务在/不在）、dry-run 不写、热区抬升与上限降级、
- * 全程不删条目、召回命中时 hits +1 / tier 回浅一层且一轮只加一次、
- * tier 惩罚不让重要条目沉底。
+ * 全程不删条目。
+ *
+ * 召回打分的分段（hits/tier 在命中时抬升）已随记忆卡改走 runtime-context 一起去掉，
+ * 那条路径不再写库，回归搬到 tests/test-recall.mjs。
  *
  * 跑法：node tests/test-memory-tidy.mjs
  */
@@ -14,7 +16,6 @@ const { mkdtempSync } = await import('node:fs')
 const { tmpdir } = await import('node:os')
 const { join } = await import('node:path')
 const { tidyMemory, ensureHitColumns } = await import('../lib/tidy.mjs')
-const { createRecall } = await import('../lib/recall.mjs')
 const { vecToBlob, blobToVec } = await import('../lib/vector.mjs')
 const { numCfg } = await import('../lib/shared.mjs')
 const { HOT_ZONE_MAX, HOT_PROMOTE_WEIGHT, TIER_PENALTY } = await import('../lib/constants.mjs')
@@ -136,37 +137,6 @@ const fakeEmbed = async (texts) => texts.map(() => Float32Array.from({ length: 5
   check('超过上限降到 30 条', hotN === 30 && r.hotAfter === 30, `${hotN}`)
   check('降的是权重最低的', r.demoted === 10 && lowest.every((x) => x.hot === 0))
   check('压热区也不删条目', count(db) === before)
-}
-
-// ---- 4. 召回：hits +1、tier 回浅、一轮只加一次、tier 惩罚只动边角 ----
-{
-  const db = makeDb()
-  const dir = mkdtempSync(join(tmpdir(), 'whale-tidy-'))
-  const deep = ins(db, { u: '今天好累，加班到十点 A', t: now - DAY, w: 1, hot: 0, tier: 3 })
-  const shallow = ins(db, { u: '今天好累，加班到十点 B', t: now - DAY, w: 1, hot: 0, tier: 0 })
-  const important = ins(db, { u: '累的时候记得这是重要的事 C', t: now - 60 * DAY, w: 9, hot: 0, tier: 6 })
-
-  const { build } = createRecall({
-    db, memoryDir: dir, bumpStat: () => {}, space: () => 'default',
-    budgetChars: () => 8000, factMax: () => 8, recentPairs: () => 0,
-    recallMax: () => 3, recallThreshold: () => 0, weightMax: () => 12,
-  })
-  const msg = (text) => ({ source: { kind: 'user' }, content: [{ type: 'text', text }] })
-  const out = await build({ agent: { session: { id: 's-tidy-1' } }, messages: [msg('今天好累啊')] })
-  const text = String(out?.text ?? '')
-  const row = (id) => db.prepare('SELECT hits, tier, w FROM entries WHERE id=?').get(id)
-
-  check('召回注入了旧事', text.includes('主动想起') || text.includes('加班到十点'), text.slice(0, 60))
-  check('命中后 hits +1', row(shallow).hits + row(deep).hits + row(important).hits >= 1, JSON.stringify([row(shallow), row(deep), row(important)]))
-  check('tier 回到浅一层', row(deep).tier === 2 && row(important).tier === 5, JSON.stringify([row(deep).tier, row(important).tier]))
-
-  const hitsAfterFirst = row(deep).hits + row(shallow).hits + row(important).hits
-  await build({ agent: { session: { id: 's-tidy-1' } }, messages: [msg('今天好累啊')] })
-  check('同一会话再来一轮不再重复加', row(deep).hits + row(shallow).hits + row(important).hits === hitsAfterFirst)
-
-  // tier 惩罚：同权重同时间，浅层排前面；印象深的不受罚。
-  const shallowFirst = text.indexOf('B') >= 0 && (text.indexOf('B') < text.indexOf('A') || text.indexOf('A') < 0)
-  check('浅层排在深层前面', shallowFirst, text.slice(0, 200))
 }
 
 // ---- 5. 分层三参数：默认等于常量、config 覆盖、越界夹边界、命令行最优先 ----

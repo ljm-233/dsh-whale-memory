@@ -75,7 +75,7 @@
 | `lib/prompt.mjs` | 系统提示词两段：纪律（静态）+ 偏好（会变） |
 | `lib/tools.mjs` | 模型可调用的工具 |
 | `lib/routes.mjs` | HTTP 端点 |
-| `lib/recall.mjs` | 记忆注入：场景、相关旧事、事实、最近几轮、日记、群摘要；带会话去重与时效衰减 |
+| `lib/recall.mjs` | 记忆卡：sync 那层拼声音、交接条、事实、联想段、最近几轮、日记、私聊的群摘要，走 `ctx.systemPrompt.context`（order 940），压缩冲掉后会重投；`associate()` 异步算「这一句相关的旧事」，一轮一次，结果按 session 缓存，card() 只同步读。深的检索仍在 `memory_recall`（每轮限 3 次，命中即升热） |
 | `lib/tidy.mjs` | 库务整理：补空向量、抬/压热区；老库补 `hits`/`tier` 两列 |
 | `lib/writer.mjs` | 交互落库：热区挤占、冷区合并、硬上限兜底 |
 | `lib/desk.mjs` | 桌面页：从库蒸四段、字节预算、固定四级压缩、落盘 |
@@ -290,15 +290,22 @@ systemctl --user enable --now dsh-whale-ruminate.timer
 |---|---|---|
 | `MEMORY_BUDGET_CHARS` | 1000 | 每次注入的记忆字符上限 |
 | `RECENT_PAIRS` | 4 | 热区保留的最近交互轮数 |
-| `RECALL_MAX` | 3 | 主动联想候选上限 |
+| `RECALL_MAX` | 3 | 每轮联想段最多几条（只管卡里的联想段，不管 `memory_recall`） |
 | `FACT_MAX` | 8 | 稳定事实条数上限 |
 | `COLD_MAX` | 2000 | 冷区硬上限 |
 | `IMPORTANT_WEIGHT` | 8 | 权重达到此值不再参与合并 |
-| `RECALL_THRESHOLD` | 2.0 | 联想的分数门槛 |
+| `RECALL_THRESHOLD` | 2.0 | 联想段的分数门槛（同上，只管卡里那一段） |
 | `WEIGHT_MAX` | 12 | 单条记忆权重上限 |
 | `BACKUP_KEEP` | 14 | 备份保留份数 |
 
 这些都能在设置面板里改。`memoryPath`、`archive.dir`、`backup.dir` 例外——路径是启动时读的。
+
+三个设置项的当前语义（0.28.10）：
+
+- `recallMax` / `recallThreshold`：作用于**每轮联想段**——就是记忆卡里「和这次有关」那几句。
+  一轮最多几条、分数低于多少就不放。`memory_recall` 工具不受这两项管（它按关键词查，限额是每轮 3 次）。
+- `tierPenalty`：作用于联想段的排序（tier 每深一层扣这么多分；`w ≥ 8` 的条目免罚）。
+  **当前版本生效**——只要联想段里出现冷区条目，它就参与排序。
 
 环境变量：
 

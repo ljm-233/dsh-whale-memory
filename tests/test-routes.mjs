@@ -18,16 +18,21 @@ import { apply } from '../lib/index.mjs'
 const dir = mkdtempSync(join(tmpdir(), 'wm-routes-'))
 const routes = new Map()
 const tools = new Map()
+// 注册进来的 systemPrompt context 和事件钩子：记忆卡与召回限流都靠它们验
+const contexts = new Map()
+const handlers = new Map()
 
 const effect = (fn) => {
   const dispose = fn()
   return typeof dispose === 'function' ? dispose : () => {}
 }
 const ctx = {
-  on: () => {},
+  on: (name, fn) => { handlers.set(name, fn) },
   inject: (deps, cb) => {
     const stub = { effect }
-    if (deps.includes('systemPrompt')) stub.systemPrompt = { section: () => {} }
+    if (deps.includes('systemPrompt')) {
+      stub.systemPrompt = { section: () => {}, context: (c) => { contexts.set(c.name, c); return () => {} } }
+    }
     if (deps.includes('llm')) stub.llm = {}
     if (deps.includes('agents')) stub.agents = { list: () => [] }
     if (deps.includes('dshIm')) stub.dshIm = {}
@@ -43,6 +48,27 @@ const ctx = {
 }
 
 apply(ctx, { memoryPath: dir, preferencePath: join(dir, 'PREFERENCE.md') })
+
+// ---- 记忆卡：走 runtime-context，不再是每轮 prepend 的一条 user 消息 ----
+{
+  const card = contexts.get('plugin:dsh-whale-memory:memory')
+  assert.ok(card, '要注册记忆卡的 context')
+  assert.equal(card.order, 940, 'order 用 940，排在运行时上下文之后')
+  assert.equal(card.interpolate, false, '卡片正文里有 {{}} 也不能被插值')
+  assert.equal(typeof card.text, 'function', 'text 必须是同步函数')
+
+  // 空库（此时还没有任何条目/事实/交接条）：返回空串，不抛
+  const empty = card.text({ agent: { session: { id: 's-empty' } } })
+  assert.equal(empty, '', `空库应该返回空串，实得 ${JSON.stringify(empty).slice(0, 60)}`)
+
+  // 拿不到 agent 也不炸
+  assert.equal(typeof card.text({}), 'string')
+  assert.equal(typeof card.text(), 'string')
+
+  // 原来那条「记忆注入」notice 不该再有了：没有 pre-step 注入钩子
+  assert.equal(handlers.has('agent/pre-step'), false, '不该再注册 pre-step 注入')
+  console.log('OK 记忆卡')
+}
 
 /** 调一个端点，返回 { status, body }。 */
 const call = (path, method = 'GET', query = '') => new Promise((ok) => {
