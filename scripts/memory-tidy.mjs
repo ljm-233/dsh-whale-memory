@@ -15,7 +15,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { openDb } from '../lib/db-open.mjs'
-import { tidyMemory } from '../lib/tidy.mjs'
+import { syncHotFromTier, tidyMemory } from '../lib/tidy.mjs'
 import { embedTexts } from '../lib/vector.mjs'
 import { DEFAULT_MEMORY_DIR, DB_FILE, HOT_ZONE_MAX, HOT_PROMOTE_WEIGHT } from '../lib/constants.mjs'
 import { numCfg } from '../lib/shared.mjs'
@@ -75,3 +75,10 @@ console.log(
   `${dryRun ? '[dry-run] ' : ''}补向量 ${result.filled}/${result.missing} 条，失败 ${result.failed} 条；` +
   `热区 ${result.hotBefore} → ${result.hotAfter} 条（升 ${result.promoted}，降 ${result.demoted}）`,
 )
+
+try {
+  const synced = syncHotFromTier(db)
+  console.log(`[sync] hot 跟随 tier：升 ${synced.up}，降 ${synced.down}`)
+} catch (e) {
+  console.log(`[sync] 跳过：${e.message}`)
+}
