@@ -40,7 +40,8 @@ const makeDb = () => {
       hot INTEGER NOT NULL DEFAULT 1, owner TEXT NOT NULL DEFAULT '', space TEXT NOT NULL DEFAULT 'default',
       hits INTEGER NOT NULL DEFAULT 0, tier INTEGER NOT NULL DEFAULT 0
     );
-    CREATE TABLE facts (id INTEGER PRIMARY KEY AUTOINCREMENT, f TEXT, space TEXT DEFAULT 'default');
+    CREATE TABLE facts (id INTEGER PRIMARY KEY AUTOINCREMENT, f TEXT, space TEXT DEFAULT 'default',
+      valid_from INTEGER NOT NULL DEFAULT 0, valid_until INTEGER);
     CREATE TABLE diary (day TEXT PRIMARY KEY, text TEXT, created_at INTEGER);
     CREATE TABLE scenes (topic TEXT PRIMARY KEY, body TEXT, entry_ids TEXT, n INTEGER, updated INTEGER, space TEXT DEFAULT 'default');
     CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);

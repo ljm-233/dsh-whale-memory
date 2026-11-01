@@ -1,5 +1,38 @@
 # 更新记录
 
+## 0.28.12
+
+### 事实有有效期了：失效只是不再默认注入，不删行
+
+- `lib/facts.mjs`（新）：`ensureFactColumns()` 用 `PRAGMA table_info` + `ALTER TABLE ADD COLUMN` 给 `facts` 补
+  `valid_from INTEGER NOT NULL DEFAULT 0` / `valid_until INTEGER`，老行 `valid_from` 回填成迁移时刻
+  （回填后不为 0，重跑不再往后推），`valid_until` 留 `NULL`；顺带建 `fact_conflicts` 与 `idx_fact_conflicts_created`
+- `listFacts(db, { space, limit, includeExpired, now })`：默认 `valid_until IS NULL OR valid_until > now`，
+  `includeExpired: true` 才连失效的一起给
+- 默认取「仍成立」的三处：`lib/recall.mjs` 记忆卡的事实段、`lib/persona.mjs` 画像、`lib/consolidate.mjs` 画像素材
+
+### 改口留痕，不并排躺着
+
+- `recordFact(db, { text, space, now })`：同文本 → 跳过（不新增行、不写冲突）；相似度 ≥ **0.62** 且文本不同 →
+  旧事实 `valid_until = now`、写新事实、往 `fact_conflicts(old_id,new_id,reason,evidence,created)` 记一行，
+  `evidence` 存「旧：…｜新：…」两份摘要
+- `lib/writer.mjs`：落库时的事实循环改走 `recordFact`，不再用 `similarity ≥ 0.6` 静默跳过；
+  原有的 `factMax` 上限与清洗策略未动
+- `recentConflicts(db, { limit })` + 只读端点 `GET /dsh-whale-memory/conflicts?limit=20`
+  （`oldText`/`newText`/`evidence`/`day`；非 GET 一律 405）；旧事实万一被上限清掉，`evidence` 里仍有摘要
+
+### 工具
+
+- `memory_recall` 增加可选参数 `includeExpired`，返回值多一段 `facts`（`id`/`text`/`expired`），
+  默认只给仍成立的。路由与工具都不写库、都不删行
+
+### 测试
+
+- 新增 `tests/test-facts.mjs`（30 项）：老库补列且不丢行 / 重跑不重复回填 / 默认只取仍成立 /
+  `includeExpired` 取得到 / 相似不一致写冲突且旧事实失效 / 完全一致不新增行不写冲突 /
+  记忆卡不含失效事实 / `memory_recall` 与 `/conflicts` 两个入口不抛错且只读
+- 各测试的最小库 fixtures 补上 `valid_from`/`valid_until` 两列（和真库同形）
+
 ## 0.28.11
 
 ### 定时梳理默认关闭：会删条目的事不能自己跑起来

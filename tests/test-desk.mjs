@@ -20,7 +20,8 @@ const check = (name, cond) => {
 const db = new DatabaseSync(':memory:')
 db.exec(`
   CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, u TEXT, a TEXT, t INTEGER, w REAL DEFAULT 1, emo TEXT DEFAULT '[]', vec BLOB, hot INTEGER DEFAULT 1, space TEXT NOT NULL DEFAULT 'default');
-  CREATE TABLE facts (id INTEGER PRIMARY KEY AUTOINCREMENT, f TEXT NOT NULL UNIQUE, space TEXT NOT NULL DEFAULT 'default');
+  CREATE TABLE facts (id INTEGER PRIMARY KEY AUTOINCREMENT, f TEXT NOT NULL UNIQUE, space TEXT NOT NULL DEFAULT 'default',
+      valid_from INTEGER NOT NULL DEFAULT 0, valid_until INTEGER);
   CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
   CREATE TABLE diary (day TEXT PRIMARY KEY, text TEXT NOT NULL, created_at INTEGER NOT NULL);
   CREATE TABLE scenes (topic TEXT PRIMARY KEY, body TEXT, entry_ids TEXT, n INTEGER, updated INTEGER, space TEXT NOT NULL DEFAULT 'default');

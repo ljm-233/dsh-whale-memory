@@ -21,7 +21,8 @@ db.exec(`
   CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, u TEXT, a TEXT, t INTEGER, w REAL DEFAULT 1, emo TEXT DEFAULT '[]', vec BLOB, hot INTEGER DEFAULT 0, space TEXT NOT NULL DEFAULT 'default');
   CREATE TABLE scenes (topic TEXT PRIMARY KEY, body TEXT, entry_ids TEXT, n INTEGER, updated INTEGER, space TEXT NOT NULL DEFAULT 'default');
   CREATE TABLE recall_seen (session TEXT NOT NULL, entry_id INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (session, entry_id));
-  CREATE TABLE facts (id INTEGER PRIMARY KEY AUTOINCREMENT, f TEXT NOT NULL UNIQUE, space TEXT NOT NULL DEFAULT 'default');
+  CREATE TABLE facts (id INTEGER PRIMARY KEY AUTOINCREMENT, f TEXT NOT NULL UNIQUE, space TEXT NOT NULL DEFAULT 'default',
+      valid_from INTEGER NOT NULL DEFAULT 0, valid_until INTEGER);
   CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
   CREATE TABLE entities (name TEXT NOT NULL, space TEXT NOT NULL DEFAULT 'default', n INTEGER, updated INTEGER, PRIMARY KEY (name, space));
   CREATE VIRTUAL TABLE entries_fts USING fts5(u, a, content='entries', content_rowid='id', tokenize='trigram');

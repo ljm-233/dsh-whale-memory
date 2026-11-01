@@ -76,6 +76,7 @@
 | `lib/tools.mjs` | 模型可调用的工具 |
 | `lib/routes.mjs` | HTTP 端点 |
 | `lib/recall.mjs` | 记忆卡：sync 那层拼声音、交接条、事实、联想段、最近几轮、日记、私聊的群摘要，走 `ctx.systemPrompt.context`（order 940），压缩冲掉后会重投；`associate()` 异步算「这一句相关的旧事」，一轮一次，结果按 session 缓存，card() 只同步读。深的检索仍在 `memory_recall`（每轮限 3 次，命中即升热） |
+| `lib/facts.mjs` | 事实的有效期（`valid_from`/`valid_until`）与冲突留痕（`fact_conflicts`） |
 | `lib/tidy.mjs` | 库务整理：补空向量、抬/压热区；老库补 `hits`/`tier` 两列 |
 | `lib/writer.mjs` | 交互落库：热区挤占、冷区合并、硬上限兜底 |
 | `lib/desk.mjs` | 桌面页：从库蒸四段、字节预算、固定四级压缩、落盘 |
@@ -140,6 +141,14 @@ keep → 蒸馏成一句话进冷区；drop → 丢掉，计 forgotten
 「存查回顾改错」里最容易被跳过的是最后一件。只存不改，记错了就一路错下去。
 
 `memory_correct` 不是原地改写：旧的整条搬进 `revisions`，主表换新的。撤回同理。这样「记错了就改」和「改过什么查得到」同时成立。
+
+### 事实的有效期
+
+`facts` 里的每一句都带两个时间：`valid_from`（写进来的那一刻）和 `valid_until`（可空，空着表示仍然成立）。默认注入（记忆卡、画像、梳理素材）和 `memory_recall` 的默认返回**只取仍成立的**——`valid_until IS NULL OR valid_until > now`。要翻旧账就显式要：`memory_recall({ includeExpired: true })` 会连失效的一起给，并标 `expired: true`。失效不等于删除：行还在，只是不再当「现在的事实」说出去；老库补列时 `valid_from` 回填成迁移时刻，`valid_until` 留空。
+
+### 事实改口会留痕
+
+写事实时先和同空间里仍成立的事实比一遍：原话重复就跳过，不新增行；高度相似（短文本相似度 ≥ 0.62）但内容不同就算改口——给旧事实盖上 `valid_until = now`，写下新事实，再往 `fact_conflicts` 记一行（`old_id` / `new_id` / `reason` / `evidence`，`evidence` 里是旧、新两份文本摘要）。只读入口：`GET /dsh-whale-memory/conflicts?limit=20`，返回最近 N 条，带 `oldText` / `newText` / `day`。全程不删行、不自动改写，旧的怎么被推翻的，事后查得到。
 
 ### 记忆怎么分层，`hits` 是什么
 
