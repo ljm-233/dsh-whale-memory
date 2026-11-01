@@ -164,10 +164,10 @@ console.log('OK 客户端设置页')
 // ---- 写入路径 ----
 // 路径 → 写法的映射是纯函数，直接调，不用模拟点击。
 const { writePath, resetPath, normalizeNumber, GROUPS } = plugin.__test
-assert.equal(GROUPS.length, 8)
-assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 6, '记忆六组（含记忆空间、夜班）')
+assert.equal(GROUPS.length, 9)
+assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 7, '记忆七组（含冷热分层、记忆空间、夜班）')
 assert.equal(GROUPS.filter((g) => g.form === 'proactive').length, 2, '主动消息两组')
-assert.equal(GROUPS.flatMap((g) => g.fields).length, 20, '一共 20 个设置项')
+assert.equal(GROUPS.flatMap((g) => g.fields).length, 23, '一共 23 个设置项')
 
 writes.length = 0
 writePath(form, ['budgetChars'], 1500)

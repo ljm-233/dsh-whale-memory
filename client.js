@@ -70,6 +70,16 @@ window.__ModuleLoader__.load({
       },
       {
         form: 'memory',
+        title: '冷热分层',
+        hint: '热区留多少条、多重才抬进来、深一层扣多少分。改完下一轮就生效。',
+        fields: [
+          { path: ['hotZoneMax'], label: '热区条数上限', kind: 'int', min: 1, max: 200 },
+          { path: ['hotPromoteWeight'], label: '抬进热区的最低权重', kind: 'int', min: 0, max: 20 },
+          { path: ['tierPenalty'], label: '层级惩罚（每深一层扣分）', kind: 'num', min: 0, max: 1, step: 0.01 },
+        ],
+      },
+      {
+        form: 'memory',
         title: '记忆空间',
         hint: '同一份库按空间隔离：换一个空间，写进去和想起来的都只看那一格。',
         fields: [

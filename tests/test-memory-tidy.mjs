@@ -16,6 +16,8 @@ const { join } = await import('node:path')
 const { tidyMemory, ensureHitColumns } = await import('../lib/tidy.mjs')
 const { createRecall } = await import('../lib/recall.mjs')
 const { vecToBlob, blobToVec } = await import('../lib/vector.mjs')
+const { numCfg } = await import('../lib/shared.mjs')
+const { HOT_ZONE_MAX, HOT_PROMOTE_WEIGHT, TIER_PENALTY } = await import('../lib/constants.mjs')
 
 let pass = 0
 let fail = 0
@@ -165,6 +167,49 @@ const fakeEmbed = async (texts) => texts.map(() => Float32Array.from({ length: 5
   // tier 惩罚：同权重同时间，浅层排前面；印象深的不受罚。
   const shallowFirst = text.indexOf('B') >= 0 && (text.indexOf('B') < text.indexOf('A') || text.indexOf('A') < 0)
   check('浅层排在深层前面', shallowFirst, text.slice(0, 200))
+}
+
+// ---- 5. 分层三参数：默认等于常量、config 覆盖、越界夹边界、命令行最优先 ----
+{
+  const db = makeDb()
+  for (let i = 0; i < 40; i++) ins(db, { u: `热${i}`, t: now - DAY, w: 1, hot: 1 })
+  const r = await tidyMemory(db, { now, embedTexts: async () => null })
+  check('默认热区上限 = 常量', r.hotAfter === HOT_ZONE_MAX, `${r.hotAfter} vs ${HOT_ZONE_MAX}`)
+
+  const db2 = makeDb()
+  ins(db2, { u: '刚到门槛', t: now - DAY, w: HOT_PROMOTE_WEIGHT, hot: 0 })
+  ins(db2, { u: '差一点', t: now - DAY, w: HOT_PROMOTE_WEIGHT - 1, hot: 0 })
+  const r2 = await tidyMemory(db2, { now, embedTexts: async () => null })
+  const hot2 = db2.prepare('SELECT u FROM entries WHERE hot=1').all().map((x) => x.u)
+  check('默认抬升门槛 = 常量', r2.promoted === 1 && hot2[0] === '刚到门槛', JSON.stringify(hot2))
+  check('默认层级惩罚 = 常量', numCfg(undefined, TIER_PENALTY, 0, 1) === TIER_PENALTY)
+}
+{
+  const db = makeDb()
+  for (let i = 0; i < 8; i++) ins(db, { u: `热${i}`, t: now - DAY, w: 1, hot: 1 })
+  ins(db, { u: '权重只有 1 的新条目', t: now - DAY, w: 1, hot: 0 })
+  const r = await tidyMemory(db, {
+    now, embedTexts: async () => null,
+    config: { hotZoneMax: 5, hotPromoteWeight: 1 },
+  })
+  const hotN = Number(db.prepare('SELECT COUNT(*) AS n FROM entries WHERE hot=1').get().n)
+  check('config 的热区上限生效', r.hotAfter === 5 && hotN === 5, `${hotN}`)
+  check('config 的抬升门槛生效', r.promoted === 1 && r.demoted === 4, JSON.stringify(r))
+}
+{
+  const db = makeDb()
+  for (let i = 0; i < 250; i++) ins(db, { u: `热${i}`, t: now - DAY, w: 1, hot: 1 })
+  const r = await tidyMemory(db, {
+    now, embedTexts: async () => null,
+    config: { hotZoneMax: 9999, hotPromoteWeight: -5 },
+  })
+  check('hotZoneMax 越界夹到 200', r.hotAfter === 200, `${r.hotAfter}`)
+  check('hotPromoteWeight 越界夹到 0', numCfg(-5, HOT_PROMOTE_WEIGHT, 0, 20) === 0)
+  check('tierPenalty 越界夹到 0..1', numCfg(5, TIER_PENALTY, 0, 1) === 1 && numCfg(-1, TIER_PENALTY, 0, 1) === 0)
+  const r2 = await tidyMemory(db, {
+    now, embedTexts: async () => null, hotMax: 3, config: { hotZoneMax: 9999 },
+  })
+  check('命令行参数优先于 config', r2.hotAfter === 3, `${r2.hotAfter}`)
 }
 
 console.log(`\n${pass} 通过，${fail} 失败`)

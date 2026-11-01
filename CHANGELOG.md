@@ -1,5 +1,18 @@
 # 更新记录
 
+## 0.28.7
+
+### 记忆分层三参数进设置页
+
+- 新增三项配置：`hotZoneMax`（热区条数上限，1–200，默认 30）、`hotPromoteWeight`
+  （抬进热区的最低权重，0–20，默认 3）、`tierPenalty`（每深一层扣的排序分，0–1，默认 0.15）。
+  都带 `.volatile()`，设置页改完下一轮就生效
+- `lib/tidy.mjs` / `lib/recall.mjs` 改成「配置优先、缺省回落常量」，越界值夹到边界
+  （统一走 `shared/helpers.mjs` 的 `numCfg`）
+- `scripts/memory-tidy.mjs` 取值优先级：命令行参数 > 活动 profile 的插件配置 > 常量；
+  `--dry-run` 照旧。可用 `--config <cordis.patch.yml>` 指定别的 profile
+- 设置页加「冷热分层」一组；`tests/test-memory-tidy.mjs` 补默认值、config 覆盖、越界夹边界等 9 项
+
 ## 0.28.6
 
 ### 新增：记忆分层（`hits` / `tier`）与库务整理
