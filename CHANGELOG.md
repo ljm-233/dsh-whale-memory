@@ -1,3 +1,21 @@
+## 0.28.17
+
+- **第二层自动落盘进仓库**：新增 `scripts/dump-group.mjs`（node 版，替代原型 py 脚本）。
+  `node:sqlite` 只读打开 `group-history.sqlite`，用 `messages.rowid` 增量（`messages.id` 是 uuid，当不了游标），
+  按本地日期写 `logs/全量-YYYY-MM-DD.md`，行格式 `HH:MM:SS 昵称：正文`；首次只导当天、重复跑不重复写、退出码永远 0。
+  Node 不够（<22.5）或 `node:sqlite` 拿不到时打印一行提示并 exit 0，不装依赖。
+- **unit 模板 + 可选安装开关**：新增 `scripts/systemd/dsh-group-dump.{service,timer}.tpl`
+  （占位符 `__HOME__` / `__NODE__` / `__INTERVAL_MIN__`）；`scripts/install-local.mjs` 加
+  `--with-group-dump`（渲染到 `~/.config/systemd/user/` 并 `systemctl --user enable --now`）与
+  `--render-units <dir>`（只渲染，给测试用），另加 `--help`。**不加开关时安装流程与以前完全一致。**
+- **第三层周记**：新增 `scripts/weekly-digest.mjs`，读第二层的按天日志 + `diary/whale-diary.md` + `db/LEDGER.md`，
+  输出 `diary/周记-YYYY-Www.md`（本周几天 / 每天多少条 / 谁说得最多 / 我在这周里做了什么）。
+  只统计与摘录，**不调 LLM**，可复现零成本。
+- **设置页**：「鲸娘记忆」新增「自动落盘 / 周记」一组：自动落盘开关、落盘间隔分钟数、周记开关、
+  周记起始日、导出目录；schema 加 `groupDump.*` 与 `weekly.*`。两个脚本与设置页共用
+  `lib/dump-config.mjs` 的同一份默认值（`LAYER_DEFAULTS`），关掉时脚本打印一行「已关闭」并 exit 0。
+- 文档：新增 `docs/MEMORY-LAYERS.md`（四层 + 设置项表）。
+
 ## 0.28.16
 
 - 记忆卡新增「现在」段：读 `~/.dsh/miyu/db/现在.md`（≤160 字），群聊与私聊共享同一段当下，解决不同会话各说各话、私聊不像自己的问题。

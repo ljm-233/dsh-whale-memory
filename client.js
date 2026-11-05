@@ -115,6 +115,18 @@ window.__ModuleLoader__.load({
         ],
       },
       {
+        form: 'memory',
+        title: '自动落盘 / 周记',
+        hint: '第二层把群聊按天落成「全量-YYYY-MM-DD.md」，第三层每周拢一份周记。改完下一轮脚本就按这里跑。',
+        fields: [
+          { path: ['groupDump', 'enabled'], label: '自动落盘', kind: 'bool', fallback: true },
+          { path: ['groupDump', 'intervalMinutes'], label: '落盘间隔（分钟）', kind: 'int', min: 1, max: 1440, fallback: 10 },
+          { path: ['weekly', 'enabled'], label: '周记', kind: 'bool', fallback: true },
+          { path: ['weekly', 'startDay'], label: '周记起始日（1=周一 … 7=周日）', kind: 'int', min: 1, max: 7, fallback: 1 },
+          { path: ['groupDump', 'dir'], label: '导出目录', kind: 'string', fallback: '~/.dsh/miyu/logs' },
+        ],
+      },
+      {
         form: 'proactive',
         title: '主动消息 · 什么时候可以说话',
         hint: '它自己判断该不该开口时的几个门槛。',

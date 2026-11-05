@@ -12,16 +12,82 @@
  *
  *   node scripts/install-local.mjs            # 同步进默认 profile 并自校验
  *   node scripts/install-local.mjs --profile /path/to/web
+ *   node scripts/install-local.mjs --with-group-dump
+ *        # 额外的第二层落盘：把 scripts/systemd/*.tpl 渲染进
+ *        # ~/.config/systemd/user/ 再 `systemctl --user enable --now dsh-group-dump.timer`
+ *        # 不加这个开关，行为与以前完全一样（不碰 systemd）
+ *   node scripts/install-local.mjs --render-units /tmp/x
+ *        # 只渲染 unit 模板到给定目录，不装包、不碰 systemd（测试用）
  */
+import { execFileSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { verifyInstall } from './verify-install.mjs'
+import { loadLayerConfig } from '../lib/dump-config.mjs'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
-const argProfile = process.argv.indexOf('--profile')
-const profile = argProfile !== -1 ? process.argv[argProfile + 1] : join(homedir(), '.dsh', 'profiles', 'web')
+const argv = process.argv.slice(2)
+const flag = (name) => argv.includes(`--${name}`)
+const flagValue = (name, fallback = null) => {
+  const i = argv.indexOf(`--${name}`)
+  if (i === -1) return fallback
+  return argv[i + 1] ?? fallback
+}
+
+if (flag('help') || argv.includes('-h')) {
+  console.log(`用法: node scripts/install-local.mjs [选项]
+
+  --profile <dir>        目标 profile（默认 ~/.dsh/profiles/web）
+  --with-group-dump      顺带装第二层落盘定时器（写 ~/.config/systemd/user/ 并 enable --now）
+  --render-units <dir>   只把 unit 模板渲染到 <dir>，不装包、不动 systemd
+  --config <file.json>   换一份配置来渲染（默认读设置页那份）
+  --help, -h             看这段
+`)
+  process.exit(0)
+}
+
+const GROUP_DUMP_UNITS = ['dsh-group-dump.service', 'dsh-group-dump.timer']
+const TEMPLATE_DIR = join(root, 'scripts', 'systemd')
+const CANONICAL_ROOT = join(homedir(), '.dsh', 'im', 'whale-memory')
+
+/**
+ * 渲染 scripts/systemd/*.tpl 到 outDir。
+ * 占位符：`__HOME__` → 家目录，`__NODE__` → 当前 node 可执行文件，
+ *         `__INTERVAL_MIN__` → 设置页里的落盘间隔分钟数。
+ */
+function renderGroupDumpUnits(outDir, opts = {}) {
+  const home = opts.home ?? homedir()
+  const nodePath = opts.node ?? process.execPath
+  const layerCfg = loadLayerConfig({ configFile: opts.configFile ?? flagValue('config') })
+  const interval = opts.intervalMinutes ?? layerCfg.groupDump.intervalMinutes
+  mkdirSync(outDir, { recursive: true })
+  const written = []
+  for (const name of GROUP_DUMP_UNITS) {
+    const tpl = readFileSync(join(TEMPLATE_DIR, `${name}.tpl`), 'utf8')
+    let body = tpl
+      .replaceAll('__HOME__', home)
+      .replaceAll('__NODE__', nodePath)
+      .replaceAll('__INTERVAL_MIN__', String(interval))
+    if (root !== CANONICAL_ROOT) {
+      body = body.split(CANONICAL_ROOT).join(root)
+    }
+    const target = join(outDir, name)
+    writeFileSync(target, body, 'utf8')
+    written.push(target)
+  }
+  return written
+}
+
+const renderDir = flagValue('render-units')
+if (renderDir) {
+  for (const f of renderGroupDumpUnits(renderDir)) console.log(`渲染 ${f}`)
+  console.log('只渲染，没装包、没碰 systemd。')
+  process.exit(0)
+}
+
+const profile = flagValue('profile') ?? join(homedir(), '.dsh', 'profiles', 'web')
 
 const packages = [
   { dir: root, name: 'dsh-whale-memory' },
@@ -79,6 +145,21 @@ if (!report.ok) {
 }
 const total = report.packages.reduce((n, p) => n + p.files, 0)
 console.log(`校验通过：${report.packages.length} 个包 / ${total} 个文件与仓库一致`)
+
+// 可选：第二层自动落盘的 systemd 单元（不给 --with-group-dump 就一个字都不动）
+if (flag('with-group-dump')) {
+  const unitDir = join(homedir(), '.config', 'systemd', 'user')
+  const files = renderGroupDumpUnits(unitDir, { home: homedir(), node: process.execPath })
+  for (const f of files) console.log(`渲染 ${f}`)
+  try {
+    execFileSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'inherit' })
+    execFileSync('systemctl', ['--user', 'enable', '--now', 'dsh-group-dump.timer'], { stdio: 'inherit' })
+    console.log('group-dump 定时器已启用（systemctl --user list-timers dsh-group-dump.timer 可查）')
+  } catch (err) {
+    console.error(`systemd 操作失败，unit 已渲染但没启用：${err?.message ?? err}`)
+    console.error('手动：systemctl --user daemon-reload && systemctl --user enable --now dsh-group-dump.timer')
+  }
+}
 
 console.log('\n装好了，重启 dsh 生效（改完代码先跑这条，光重启没用）。')
 console.log('验证：curl http://127.0.0.1:3080/dsh-whale-memory/status')
