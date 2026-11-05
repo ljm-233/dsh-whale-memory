@@ -86,11 +86,18 @@ const value = {
   archive: { enabled: true, notify: true, dir: '', botId: '', targetId: '' },
 }
 const user = { budgetChars: 1500, archive: { notify: false } }
+// Host 的 schema 默认层：行尾那块「默认 X」只从这一层读，客户端不写死默认值。
+const base = {
+  budgetChars: 4000, recentPairs: 6, cardDailyMax: 12, recallMax: 5, space: 'default',
+  moodEnabled: true, moodInjectDailyMax: 6, hotZoneMax: 30,
+  groupDump: { enabled: true, intervalMinutes: 10, dir: '' },
+  weekly: { enabled: true, startDay: 1 },
+}
 const writes = []
 
-const makeForm = (val, usr) => ({
+const makeForm = (val, usr, bs = {}) => ({
   getSnapshot: () => ({
-    status: 'ready', value: val, base: {}, user: usr, revision: 3, writable: true,
+    status: 'ready', value: val, base: bs, user: usr, revision: 3, writable: true,
   }),
   subscribe: () => () => {},
   set: (field, v) => { writes.push({ op: 'set', ns: val.__ns, path: [field], value: v }); return Promise.resolve(true) },
@@ -108,8 +115,8 @@ const proactiveValue = {
   tickMinutes: 30,
 }
 const proactiveUser = { dailyCap: 5 }
-const form = makeForm(value, user)
-const proactiveForm = makeForm(proactiveValue, proactiveUser)
+const form = makeForm(value, user, base)
+const proactiveForm = makeForm(proactiveValue, proactiveUser, { dailyCap: 2 })
 
 let registration = null
 const slots = {
@@ -142,80 +149,160 @@ assert.equal(registration.spec.label(), '鲸娘记忆')
 // ---- 渲染 ----
 const html = renderToStaticMarkup(React.createElement(registration.component))
 
+/** 去标签后的可见文本：量「读了几个字」用。 */
+const visibleText = (markup) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
+
 for (const text of [
-  // 四区（按「我要干什么」分）
+  // 四个区（按「我要干什么」分）+ 顶部锚点导航
   '它现在怎么想我', '记忆怎么收', '怎么被叫醒', '危险与诊断',
-  '注入什么进上下文', '想起哪些旧事', '日记', '自动写日记', '压缩存档',
-  '注入字符上限', '想起门槛', '存档后私发一份',
-  '每天最多真正注入几次', '注入置信门槛',
-  '主动消息 · 什么时候可以说话', '主动消息 · 免打扰', '每天最多发几条', '多久检查一次',
+  // 常用项：默认就摊开，不用点
+  '记账开关', '一天最多说几次', '注入字符上限', '当前空间',
+  '热区保留轮数', '每天最多注入几次', '每轮最多想起几条',
+  '群聊自动落盘', '落盘间隔', '周记', '备份一份',
+  // 记忆内容那一栏
   '记忆内容', '热区', '冷区', '只读',
 ]) {
   assert.ok(html.includes(text), `页面里应该出现「${text}」`)
 }
-assert.ok(html.includes('可以单条删掉'), '场景那一块要说明「单条能删、原文不丢」')
 assert.ok(html.includes('value="1000"'), '应该渲染出当前值 1000')
-// 覆盖标记还在行内，但路径与范围已经收进 title（悬停可见），不再常驻。
 assert.ok(/已改/.test(html), '用户改过的项要标出来')
 assert.ok(!html.includes('budgetChars · 已改'), '路径不再常驻行内')
-assert.ok(html.includes('title="budgetChars (50–50000)"'), '路径与取值范围放进 title')
-// 三件套：单位与范围要写进可见文本（以前只藏在 title 里，等于没有）。
-const visibleText = (markup) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
-assert.ok(visibleText(html).includes('50–50000'), '数字项要写出范围')
-assert.ok(visibleText(html).includes('默认'), '每一项都要有默认值提示')
+assert.ok(/title="[^"]*budgetChars \(50–50000\)"/.test(html), '路径与取值范围放进 title')
 assert.ok(!visibleText(html).includes('budgetChars'), '路径仍然不常驻行内')
-assert.ok(html.includes('title="archive.notify"'), '嵌套字段也有 title')
+assert.ok(/title="[^"]*groupDump\.intervalMinutes[^"]*"/.test(html), '嵌套字段也有 title（常用里的那一行）')
 assert.ok(!html.includes('archive.enabled · 已改'), '没改过的项不能误标')
-assert.ok(!html.includes('记忆空间'), '「记忆空间」那张单行卡已并进「记忆注入」')
-assert.ok(html.includes('已保存'), '要写清保存回执长什么样')
-assert.ok(html.includes('当前空间'), '空间字段并进记忆注入后仍然在')
+assert.ok(!html.includes('记忆空间'), '「记忆空间」那张单行卡已并进注入与空间')
+assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后仍然在')
 
-// ---- 只读态要说清为什么、怎么改 ----
+// ---- 一行三块：名称 / 控件 / 极短后缀 ----
 {
-  const ro = renderToStaticMarkup(React.createElement(registration.component))
-  assert.ok(ro.length > 0)
+  // 行尾后缀只允许「默认 X」或「已改」，不许再并排单位·范围·覆盖态。
+  const nodes = html.split(/<[^>]+>/).map((x) => x.trim()).filter(Boolean)
+  const withDefault = nodes.filter((t) => t.includes('默认'))
+  assert.ok(withDefault.length > 0, '每行要有「默认 X」这一块')
+  assert.equal(withDefault.filter((t) => t.includes('·')).length, 0, '后缀里不能同时出现「·」和「默认」')
+  assert.ok(!visibleText(html).includes('范围 '), '范围不再常驻行内（进 title）')
+  // 单位写进名称的括号里
+  assert.ok(html.includes('注入字符上限（字）'), '单位写在名称后的括号里')
+  assert.ok(html.includes('落盘间隔（分钟）'), '嵌套字段也带单位')
 }
-// ---- 记忆内容是只读的 ----
+
+// ---- 常用 / 高级两层 ----
 {
-  // 所有可写控件都来自 settingRow（有 onWrite）；记忆内容那一块只发 GET 请求。
+  const { GROUPS: G, ACTIONS: A } = plugin.__test
+  const fields = G.flatMap((g) => g.fields)
+  const core = fields.filter((f) => f.tier === 'core')
+  const coreActions = A.filter((a) => a.tier === 'core')
+  assert.ok(fields.length === 40, '一共 40 个设置项（数量不变，只分层）')
+  assert.ok(core.length + coreActions.length <= 14, '常用区合计 ≤14 项')
+  assert.equal(core.length + coreActions.length, 11, '常用 11 项（10 个字段 + 备份按钮）')
+  for (const key of ['budgetChars', 'space', 'recentPairs', 'cardDailyMax', 'recallMax',
+    'moodEnabled', 'moodInjectDailyMax', 'groupDump.enabled', 'groupDump.intervalMinutes', 'weekly.enabled']) {
+    assert.ok(core.some((f) => f.path.join('.') === key), `${key} 应该在常用里`)
+  }
+  assert.deepEqual(A.filter((a) => a.tier === 'core').map((a) => a.id), ['backup'], '备份按钮在常用里')
+  // 高级默认折叠：没点之前，高级里的东西一个都不渲染
+  assert.ok(html.includes('高级（3 项）'), '现在区的高级入口')
+  assert.ok(html.includes('高级（14 项）'), '记忆怎么收的高级入口')
+  assert.ok(html.includes('高级（9 项）'), '怎么被叫醒的高级入口')
+  assert.ok(html.includes('高级（6 项）'), '诊断区的高级入口')
+  assert.ok(!html.includes('收起高级'), '默认是折叠的')
+  for (const hidden of ['打分公式', '自动写日记', '导出目录', '影子模式', '免打扰起点', '心情半衰期', '热区条数上限']) {
+    assert.ok(!html.includes(hidden), `高级项「${hidden}」默认不渲染`)
+  }
+  assert.ok(/title="[^"]*scoreMode/.test(html) === false, '诊断项默认收起，首屏不渲染')
+  assert.ok(!html.includes('展开诊断'), '「展开诊断」按钮已被「高级」入口取代')
+}
+
+// ---- 说明一行、≤25 字 ----
+{
+  const { GROUPS: G } = plugin.__test
+  const fields = G.flatMap((g) => g.fields)
+  const tooLong = fields.filter((f) => [...f.desc].length > 25)
+  assert.deepEqual(tooLong.map((f) => f.path.join('.')), [], '每项说明 ≤25 字')
+  assert.ok(fields.every((f) => typeof f.long === 'string' && [...f.long].length > 10), '长解释挪进 long（渲染成 title 悬停）')
+  for (const g of G) assert.ok([...g.hint].length <= 30, `${g.title} 的组说明 ≤30 字`)
+  for (const z of plugin.__test.ZONES) assert.ok([...z.hint].length <= 30, `${z.title} 的区说明 ≤30 字`)
+  for (const f of fields) {
+    if (f.kind === 'int' || f.kind === 'num') assert.match(f.label, /（.+）$/, `${f.path.join('.')} 的单位要写进名称括号`)
+  }
+}
+
+// ---- 状态条压到 4 格，取不到数据写「—」 ----
+{
+  const { statusChipsOf } = plugin.__test
+  const empty = statusChipsOf(null, null, undefined)
+  assert.equal(empty.length, 4, '状态条只有 4 格')
+  assert.deepEqual(empty.map((c) => c.label), ['版本', '条目', '今日注入', '情绪'])
+  assert.ok(empty.every((c) => c.value === '—'), '取不到数据写「—」')
+  const full = statusChipsOf(
+    { pluginVersion: '0.28.18', hot: 41, cold: 1914, cardInject: { day: new Date().toISOString().slice(0, 10), count: 3 } },
+    { recent: [{ mood: 62, reason: '今天话短' }] }, 12)
+  assert.deepEqual(full.map((c) => c.value), ['v0.28.18', '1955 条', '3 / 12', '62'])
+  assert.equal(full[1].hint, '热 41 · 冷 1914')
+  // 页面上一个问号都不许有：以前六格全是「?」，看着像坏了。
+  assert.equal((visibleText(html).match(/[?？]/g) ?? []).length, 0, '页面上不能出现「?」')
+}
+
+// ---- 顶部锚点导航 ----
+{
+  const { ZONES: Z } = plugin.__test
+  for (const z of Z) {
+    assert.ok(html.includes(`href="#dsh-whale-memory-zone-${z.id}"`), `${z.title} 的锚点链接`)
+    assert.ok(html.includes(`id="dsh-whale-memory-zone-${z.id}"`), `${z.title} 的锚点目标`)
+  }
+}
+
+// ---- 记忆内容只读 + 只读态要说清怎么改 ----
+{
   assert.ok(!html.includes('<textarea'), '不该有可自由编辑记忆内容的输入框')
-  console.log('OK 记忆内容只读')
+  const roForm = (val) => ({
+    getSnapshot: () => ({ status: 'ready', value: val, base: {}, user: {}, revision: 1, writable: false }),
+    subscribe: () => () => {},
+    set: () => Promise.resolve(false),
+    unset: () => Promise.resolve(false),
+    mutate: () => Promise.resolve(false),
+  })
+  let roReg = null
+  const roSlots = { inject: (_n, cb) => cb(), register: (_spec, comp) => { roReg = comp; return () => {} } }
+  plugin.apply({
+    get: (name) => (name === 'slots' ? roSlots
+      : name === 'configForms' ? { get: (ns) => roForm(ns === 'dsh-whale-memory' ? value : proactiveValue) }
+        : undefined),
+  })
+  const roHtml = renderToStaticMarkup(React.createElement(roReg))
+  assert.ok(roHtml.includes('writable=false'), '只读态要写清「为什么灰、去改哪个文件」')
+  assert.ok(roHtml.includes('disabled'), '只读时控件要灰掉')
 }
-
-console.log('OK 客户端设置页')
 
 // ---- 写入路径 ----
 // 路径 → 写法的映射是纯函数，直接调，不用模拟点击。
 const { writePath, resetPath, normalizeNumber, GROUPS, writeStateOf } = plugin.__test
 assert.equal(GROUPS.length, 12, '按「我要干什么」分成 12 个小节')
 assert.equal(new Set(GROUPS.map((g) => g.zone)).size, 4, '四区：现状 / 收 / 叫醒 / 诊断')
-assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 10, '记忆十组（含新增的「入库取舍」与「打分与调试」）')
-assert.ok(GROUPS.find((g) => g.title === '注入什么进上下文').fields.some((f) => f.path.join('.') === 'space'), '空间字段落在注入这一组')
+assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 10, '记忆十组（含「入库取舍」与「打分与调试」）')
+assert.ok(GROUPS.find((g) => g.title === '注入与空间').fields.some((f) => f.path.join('.') === 'space'), '空间字段落在注入与空间这一组')
 assert.equal(GROUPS.filter((g) => g.form === 'proactive').length, 2, '主动消息两组')
 assert.equal(GROUPS.flatMap((g) => g.fields).length, 40, '一共 40 个设置项（含 admitShadow / speakerEnabled）')
-// 每一项都要三件套：说明；数字带单位、开关带开/关后果。
+// 每一项都要「一行说明 + 一段长解释」，另外带 tier（常用/高级）。
 for (const field of GROUPS.flatMap((g) => g.fields)) {
   assert.ok(typeof field.desc === 'string' && field.desc.length > 0, `${field.path.join('.')} 缺一行说明`)
-  if (field.kind === 'bool') assert.ok(typeof field.note === 'string' && field.note.length > 0, `${field.path.join('.')} 开关缺「开/关会影响什么」`)
-  else if (field.kind !== 'select' && field.kind !== 'string') assert.ok(typeof field.unit === 'string' && field.unit.length > 0, `${field.path.join('.')} 数字缺单位`)
+  assert.ok(field.tier === 'core' || field.tier === 'adv', `${field.path.join('.')} 缺 tier`)
+  if (field.kind === 'bool') assert.ok(typeof field.long === 'string' && field.long.includes('开'), `${field.path.join('.')} 开关缺「开/关会影响什么」`)
 }
-const injection = GROUPS.find((g) => g.title === '注入什么进上下文').fields.map((f) => f.path.join('.'))
-assert.ok(injection.includes('cardDailyMax'), '记忆注入这组要有「每天最多真注入几次」')
-assert.ok(injection.includes('cardMinConfidence'), '记忆注入这组要有「注入置信门槛」')
+const injection = GROUPS.find((g) => g.title === '注入与空间').fields.map((f) => f.path.join('.'))
+assert.ok(injection.includes('cardDailyMax'), '注入与空间这组要有「每天最多真注入几次」')
+assert.ok(injection.includes('cardMinConfidence'), '注入与空间这组要有「注入置信门槛」')
 // 三维打分：公式与场景都是下拉（kind: 'select'），调试开关是 bool。
-// 诊断区：公式/场景/调试开关收进折叠块，不在默认视图里占位。
-const diagFields = GROUPS.find((g) => g.title === '打分与调试（平时不用动）').fields
+const diagFields = GROUPS.find((g) => g.title === '打分与调试').fields
 for (const k of ['scoreMode', 'recallScene', 'axesDebug', 'speakerEnabled']) {
   assert.ok(diagFields.map((f) => f.path.join('.')).includes(k), `诊断这组要有 ${k}`)
 }
-assert.ok(!html.includes('title="scoreMode"'), '诊断项默认收起，首屏不渲染')
-assert.ok(html.includes('展开诊断'), '要有展开诊断的入口')
-const assocFields = diagFields
-assert.ok(assocFields.some((f) => f.path.join('.') === 'recallScene' && f.kind === 'select' && f.options.length >= 4),
+assert.ok(diagFields.some((f) => f.path.join('.') === 'recallScene' && f.kind === 'select' && f.options.length >= 4),
   '打分场景是下拉，至少四个选项（recall / lookup-old / daily / auto）')
-assert.ok(assocFields.some((f) => f.path.join('.') === 'scoreMode' && f.kind === 'select' && f.options.length === 2),
+assert.ok(diagFields.some((f) => f.path.join('.') === 'scoreMode' && f.kind === 'select' && f.options.length === 2),
   '打分公式是下拉，两个选项（axes / legacy）')
-const moodFields = GROUPS.find((g) => g.title.startsWith('情绪记账')).fields.map((f) => f.path.join('.'))
+const moodFields = GROUPS.find((g) => g.title === '情绪记账').fields.map((f) => f.path.join('.'))
 for (const k of ['moodInjectDailyMax', 'moodInjectMinDelta', 'moodInjectCooldownHours']) {
   assert.ok(moodFields.includes(k), `情绪记账这组要有 ${k}`)
 }

@@ -61,7 +61,7 @@
 | 接入点 | `lib/recall.mjs` 的 `associate()` | 原来 `recall.mjs:136-142` 那三行（`decay`/`penalty`/`s`）搬进 `legacyScore()`；新路径用 `scoreEntry()`。冷区候选一次查询补两列原料：`imp`（缺列 → `NULL AS imp`）与 `cites`（`entry_evidence` 条数，缺表 → 0），探测只做一次。`emo` 解析失败当空数组——一个坏字段不许把整段联想带走。 |
 | 门槛 | `lib/constants.mjs` 的 `AXES_THRESHOLD` | 新分 0..1，旧那把 2.0 的尺子不能用：`recall 0.55 / lookup-old 0.45 / daily 0.60`。`legacy` 模式仍读 `recallThreshold`（默认 2.0），两条路各用各的门槛。`confidenceOf()` 也改成读这一轮真用的那把尺子。 |
 | 可观测 | `/dsh-whale-memory/status` 的 `axes` 字段 + `axesDebug` | status 回 `{mode, scene, sceneConfigured, debug, threshold, scenes:{三套权重+半衰+门槛}, envOverride}`。`axesDebug`（默认关，设置页可开）在日志里打一行头（场景/权重/半衰/门槛）+ 本次 top5 每条 `rel/imp/time → 分`，只读、不动排序、不写库。 |
-| 切换 | 设置项 `scoreMode` / 环境变量 `WHALE_SCORE_MODE` | `axes`（默认）↔ `legacy`（旧公式）。环境变量优先，重启生效；设置页改完下一轮就生效。设置页「主动联想」组新增三行：打分公式（下拉）、打分场景（下拉：recall/lookup-old/daily/auto）、日志打印三轴分解（开关）。client.js 为此新增 `kind: 'select'`（原来只有 string/bool/num 三种）。 |
+| 切换 | 设置项 `scoreMode` / 环境变量 `WHALE_SCORE_MODE` | `axes`（默认）↔ `legacy`（旧公式）。环境变量优先，重启生效；设置页改完下一轮就生效。设置页「危险与诊断 → 打分与调试」组（高级折叠里）新增三行：打分公式（下拉）、打分场景（下拉：recall/lookup-old/daily/auto）、日志打印三轴分解（开关）。client.js 为此新增 `kind: 'select'`（原来只有 string/bool/num 三种）。 |
 
 **已知的口径（验收实测，别当成 bug）**：真实库里 1955 条**全部落在 10-30~11-05 这七天内**，冷区候选又是「最近 300 条冷区」，所以 `time` 轴目前全是 ≈1.00——两场景的差别主要体现在 `imp` 权重（.25 → .45）上；十年半衰要等冷区窗口真的够到旧条目才会显形。实测两条：`雾屋 看路` 在 `recall` 只有 2 条过线（rel .54/.54），`lookup-old` 多出两条 `rel .29 / imp .67` 的（重要性顶上来）；`记忆卡的置信门槛` 五条都在、名次不变，只是第 1/2 名的分差被压平（.73/.73 → .70/.70）。
 
