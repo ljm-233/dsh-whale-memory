@@ -71,15 +71,27 @@ window.__ModuleLoader__.load({
      *      卸载就丢；隐藏还能让「切回来」是瞬时的。见 renderZone。
      *   3. 状态条只在第一页顶部（其余页各有一条自己的计数，例如诊断页的 spk 覆盖率）。
      *
+     * 0.28.19：五条页签——库里的东西从第一页搬出来，单独一页。
+     *
+     *   before  第一页 = 状态条 + 只读预览 + 热区/冷区/场景/画像/图谱/空间（挤成一坨）
+     *   after   第一页只说明「它现在怎么想我」；「记忆内容」一页专门翻东西，
+     *           每条记忆两行（摘要 / 空间·来源·重要度·命中·层级·最后想起·在哪一区），
+     *           热冷占比条、空间下拉带条数、场景的「今天触发过没有」都在这一页。
+     *
      * 默认值不在这里写——渲染时从表单快照的 `base` 层取，少一处副本就少一处说谎的地方。
      */
+    /** react 只在这里 require 一次：下面的小构件与 h(...) 都要它。 */
+    const React = require('react')
+    /** React.createElement 的短名：这一页全是手写的 h(...)，不打 JSX。 */
+    const h = React.createElement
+
     const ZONES = [
       {
         id: 'now',
         slug: 'mood',
         title: '它现在怎么想我',
         hint: '一眼看现状，下面几道闸管心情。',
-        long: '上面是只读预览（这一轮会带什么进上下文）；下面是它说自己心情的几道闸，改了下一轮就生效。',
+        long: '上面是只读预览（这一轮会带什么进上下文）；下面是它说自己心情的几道闸，改了下一轮就生效。库里的东西在「记忆内容」那一页。',
       },
       {
         id: 'intake',
@@ -87,6 +99,13 @@ window.__ModuleLoader__.load({
         title: '记忆怎么收',
         hint: '收什么、留多少、落到哪。',
         long: '改完下一轮生效，不用重启；数字越小越省 token。',
+      },
+      {
+        id: 'content',
+        slug: 'content',
+        title: '记忆内容',
+        hint: '库里到底存了什么。',
+        long: '热区/冷区原文（可改、可撤回）、成段的场景、画像、实体关系图、按空间分开看。只读为主，写入口各自带一次确认。',
       },
       {
         id: 'wake',
@@ -105,10 +124,10 @@ window.__ModuleLoader__.load({
     ]
 
     /**
-     * 页签：一个区就是一页，四个区四条页签。
+     * 页签：一个区就是一页，五个区五条页签。
      *
-     *   地址栏  `#tab=<slug>`（mood / memory / wake / diag）——分享给别人打开落在同一页
-     *   本地    localStorage[`whale-memory.settings.tab`] 存区 id（now / intake / wake / diag）
+     *   地址栏  `#tab=<slug>`（mood / memory / content / wake / diag）——分享给别人打开落在同一页
+     *   本地    localStorage[`whale-memory.settings.tab`] 存区 id（now / intake / content / wake / diag）
      *
      * 两处都认不出时回第一页，不报错：脏书签不该把设置页搞成空白。
      */
@@ -952,9 +971,153 @@ window.__ModuleLoader__.load({
         },
       ]
     }
+    /** 情绪键 → 中文，只用于显示。 */
+    const EMO_TEXT = { tired: '累', sad: '难过', angry: '烦', happy: '开心', anxious: '焦虑' }
+
+    const fmtTime = (ms) => {
+      const d = new Date(ms)
+      const p2 = (n) => String(n).padStart(2, '0')
+      return `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`
+    }
+
+    /**
+     * 是不是「今天」：场景那一行要标出「今天触发过没有」。
+     * 按本地日历日比，不看 24 小时差——早上和夜里都算今天。
+     */
+    const sameDay = (ms) => {
+      const t = Number(ms)
+      if (!(t > 0)) return false
+      const a = new Date(t)
+      const b = new Date()
+      return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+    }
+
+    /**
+     * 空状态：一句「还没有」+ 一句「为什么还没有」。
+     * 空白块最费解——不写原因的话，看着像坏了。
+     */
+    const emptyBox = (what, why) => h('div', {
+      style: { display: 'flex', flexDirection: 'column', gap: '1px', padding: '2px 0' },
+    },
+    h('p', { style: { fontSize: '12px', opacity: 0.7, margin: 0 } }, what),
+    h('p', { style: { fontSize: '11px', opacity: 0.5, margin: 0, lineHeight: 1.55 } }, why),
+    )
+
+    /**
+     * 一条记忆的第二行：空间 · 来源 · 重要度 · 命中次数 · 层级 · 最后想起 · 在哪一区。
+     *
+     * 一行排完、10px 小字：这些是「查账用的」，不该抢摘要的位置。
+     * imp 是 NULL 表示走自动公式，写「自动」而不是「0」。
+     */
+    const entryMetaText = (item) => {
+      const spk = String(item?.spk ?? '')
+      const imp = item?.imp === null || item?.imp === undefined ? '自动' : String(item.imp)
+      const lastHit = Number(item?.lastHit ?? 0)
+      return [
+        String(item?.space ?? 'default'),
+        spk === '' ? '未知' : spk.slice(0, 8),
+        imp,
+        `命中 ${Number(item?.hits ?? 0)} 次`,
+        `tier ${Number(item?.tier ?? 0)}`,
+        lastHit > 0 ? `最后想起 ${fmtTime(lastHit)}` : '还没被想起',
+        item?.hot === true ? '热区' : '冷区',
+      ].join(' · ')
+    }
+
+    /** 小圆角方块：只写一个短数字/短词，例如空间条目数。 */
+    const badgeStyle = {
+      fontSize: '10px', lineHeight: 1.5, padding: '0 6px', borderRadius: '999px',
+      border: '1px solid rgba(128,128,128,0.3)', background: 'rgba(128,128,128,0.12)',
+      whiteSpace: 'nowrap',
+    }
+
+    /**
+     * 一条记忆：两行。第一行摘要（一行，超出省略），第二行元信息（一行小字）。
+     * 点摘要才展开全文——详情是第三屏以后的事，默认不该占版面。
+     *
+     * 抽成纯函数是为了能直接渲染它做验收（见 exports.__test.entryRow），
+     * 页面和验收脚本走的是同一份代码，不复制。
+     */
+    const entryRow = (item, opts) => {
+      const open = opts?.open === true
+      const toggle = typeof opts?.onToggle === 'function' ? opts.onToggle : () => {}
+      const summary = String(item?.user ?? '').replace(/\s+/g, ' ').trim()
+      const emo = (item?.emo ?? []).map((k) => EMO_TEXT[k] ?? k).join('/')
+      return h('li', {
+        key: String(item?.id),
+        style: { padding: '3px 0', borderBottom: '1px solid rgba(128,128,128,0.12)' },
+      },
+      // 第一行：摘要。
+      h('div', {
+        role: 'button',
+        tabIndex: 0,
+        title: open ? '收起全文' : '展开全文',
+        onClick: toggle,
+        onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() } },
+        style: {
+          fontSize: '12px', lineHeight: 1.5, cursor: 'pointer',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        },
+      }, `${open ? '▾' : '▸'} ${summary === '' ? '（空）' : summary}`),
+      // 第二行：元信息，一行排完。
+      h('div', {
+        style: {
+          fontSize: '10px', lineHeight: 1.5, opacity: 0.5,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        },
+      }, entryMetaText(item)),
+      open
+        ? h('div', { style: { margin: '3px 0 0', display: 'flex', flexDirection: 'column', gap: '2px' } },
+          h('div', { style: { fontSize: '10px', opacity: 0.45 } },
+            `${fmtTime(Number(item?.at ?? 0))} · 权重 ${Math.round(Number(item?.weight ?? 0) * 10) / 10}${emo === '' ? '' : ` · ${emo}`}`),
+          h('div', { style: { fontSize: '12px', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' } },
+            String(item?.user ?? '')),
+          String(item?.assistant ?? '') === '' ? null
+            : h('div', { style: { fontSize: '12px', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', opacity: 0.55 } },
+              String(item.assistant)),
+          h('div', { style: { display: 'flex', gap: '10px', marginTop: '1px' } },
+            h('button', {
+              type: 'button',
+              onClick: typeof opts?.onCorrect === 'function' ? opts.onCorrect : undefined,
+              style: { border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '11px', opacity: 0.55, padding: 0, color: 'inherit' },
+            }, '改'),
+            h('button', {
+              type: 'button',
+              onClick: typeof opts?.onRetract === 'function' ? opts.onRetract : undefined,
+              style: { border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '11px', opacity: 0.55, padding: 0, color: 'inherit' },
+            }, '撤回')),
+        )
+        : null,
+      )
+    }
+
+    /**
+     * 热区/冷区占比条：两段色块，纯 CSS（flex 按条数分宽），不引图表库。
+     * 数字写在条下面，色条只给「大概占多少」的直觉。
+     */
+    const countBar = (counts) => {
+      const hot = Math.max(0, Number(counts?.hot ?? 0))
+      const cold = Math.max(0, Number(counts?.cold ?? 0))
+      const sum = hot + cold
+      if (sum === 0) return null
+      const pct = (n) => Math.round((n / sum) * 1000) / 10
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+        h('div', {
+          role: 'img',
+          'aria-label': `热区 ${hot} 条，冷区 ${cold} 条`,
+          style: {
+            display: 'flex', height: '6px', borderRadius: '999px',
+            overflow: 'hidden', background: 'rgba(128,128,128,0.16)',
+          },
+        },
+        h('div', { title: `热区 ${hot} 条（${pct(hot)}%）`, style: { flex: `${hot} 1 0`, background: 'currentColor', opacity: 0.9 } }),
+        h('div', { title: `冷区 ${cold} 条（${pct(cold)}%）`, style: { flex: `${cold} 1 0`, background: 'currentColor', opacity: 0.3 } })),
+        h('div', { style: { fontSize: '10px', opacity: 0.55, whiteSpace: 'nowrap' } },
+          `热 ${hot}（${pct(hot)}%） · 冷 ${cold}（${pct(cold)}%）`),
+      )
+    }
+
     const apply = (ctx) => {
-      const React = require('react')
-      const h = React.createElement
       const primitives = (() => {
         try {
           return require('@deepseek-ai/dsh-client-ui-primitives')
@@ -1159,20 +1322,11 @@ window.__ModuleLoader__.load({
         )
       }
 
-      /** 情绪键 → 中文，只用于显示。 */
-      const EMO_TEXT = { tired: '累', sad: '难过', angry: '烦', happy: '开心', anxious: '焦虑' }
-
-      const fmtTime = (ms) => {
-        const d = new Date(ms)
-        const p2 = (n) => String(n).padStart(2, '0')
-        return `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`
-      }
-
       /**
        * 热区 / 冷区的内容预览。
        *
-       * 纯只读：这里只有文字和一个切换按钮，没有任何写入口——
-       * 记忆内容该怎么变是插件自己决定的，不该由设置页手动改。
+       * 纯只读为主：这里只有文字和切换按钮，写入口只有「改 / 撤回 / 切空间」三处，
+       * 都各自带一次确认。
        */
       const EntriesView = ({ onSwitchSpace, currentSpace, spaceSave }) => {
         const [zone, setZone] = React.useState('cold')
@@ -1247,16 +1401,16 @@ window.__ModuleLoader__.load({
           }
         }
 
-        // 图谱的空间下拉读现成的 /spaces 列表：开一次就够，不跟着页签反复拉。
+        // 空间下拉读现成的 /spaces 列表：整页共用一份，开一次就够，不跟着子页签反复拉。
         React.useEffect(() => {
-          if (zone !== 'graph' || spaces !== null) return undefined
+          if (spaces !== null) return undefined
           let alive = true
           fetch('/dsh-whale-memory/spaces', { headers: { accept: 'application/json' } })
             .then((res) => (res.ok ? res.json() : null))
             .then((json) => { if (alive) setSpaces(Array.isArray(json?.spaces) ? json.spaces : []) })
             .catch(() => { if (alive) setSpaces([]) })
           return () => { alive = false }
-        }, [zone, spaces])
+        }, [spaces])
 
         React.useEffect(() => {
           let alive = true
@@ -1327,6 +1481,13 @@ window.__ModuleLoader__.load({
             const deskAt = Number(data.deskAt ?? 0)
             const files = Array.isArray(data.notes?.files) ? data.notes.files : []
             const notesDir = String(data.notes?.dir ?? '')
+            // 「关于你的事实」那一段卡片里到底带了哪几条：后端按 recall 的同一口径
+            // （listFacts + factMax）算好递过来，这里只照着念，不另外筛一遍。
+            const facts = Array.isArray(data.facts) ? data.facts : []
+            const cap = Number(data.factMax ?? 0)
+            // 画像正文逐行铺开：情绪词那一行要单独标出来（旧名「情绪底色」，已改名）。
+            const lines = text.split('\n').map((s) => s.trim()).filter((s) => s !== '')
+            const isEmoLine = (s) => /^(对方话里的情绪词|情绪底色)/.test(s)
             return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
               h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' } },
                 h('span', { style: metaStyle },
@@ -1360,14 +1521,36 @@ window.__ModuleLoader__.load({
                 : h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px 12px' } },
                   ...files.map((f) => h('span', { key: f.name, style: metaStyle },
                     `${f.name} · ${fmtTime(f.mtime)}`))),
+              // ── 卡片里「关于你的事实」实际取到的原文（只读） ──
+              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' } },
+                  h('span', { style: { fontSize: '11px', fontWeight: 600, opacity: 0.75 } }, '关于你的事实（卡片里实际取到的）'),
+                  h('span', { style: badgeStyle }, `${facts.length} / 上限 ${cap}`)),
+                facts.length === 0
+                  ? emptyBox('这一段现在是空的。', cap === 0 ? '事实条数上限设成了 0，卡片永远不带事实。' : '事实由夜班从对话里抽，攒到够稳才会落库；抽不到的宁可不写。')
+                  : h('ol', {
+                    style: { display: 'flex', flexDirection: 'column', gap: '1px', margin: 0, padding: '0 0 0 16px' },
+                  }, ...facts.map((f) => h('li', {
+                    key: f,
+                    style: { fontSize: '12px', lineHeight: 1.55, overflowWrap: 'anywhere' },
+                  }, String(f))))),
               text === ''
-                ? h('p', { style: { fontSize: '12px', opacity: 0.55 } }, '还没有画像，等下一次梳理。')
-                : h('pre', {
-                  style: {
-                    fontSize: '12px', lineHeight: 1.6, whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word', margin: 0, fontFamily: 'inherit', opacity: 0.85,
+                ? emptyBox('还没有画像正文。', '画像在梳理时重蒸；库里的记忆还少，或夜班没跑过。')
+                : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '1px' } },
+                  ...lines.map((line, i) => h('div', {
+                    key: `p${i}`,
+                    style: {
+                      fontSize: '12px', lineHeight: 1.6, overflowWrap: 'anywhere',
+                      opacity: isEmoLine(line) ? 0.95 : 0.85,
+                    },
                   },
-                }, text),
+                  line,
+                  isEmoLine(line)
+                    ? h('span', {
+                      style: { marginLeft: '6px', fontSize: '10px', opacity: 0.55 },
+                      title: '这一行统计的是对方说过的情绪词，不是我的心情；我的心情在 mood_log。',
+                    }, '（旧名「情绪底色」，已改名）')
+                    : null))),
             )
           }
 
@@ -1403,9 +1586,6 @@ window.__ModuleLoader__.load({
               border: 'none', background: 'transparent', cursor: 'pointer',
               color: 'inherit', padding: 0, textAlign: 'left', font: 'inherit',
             }
-            const spaceList = spaces === null || spaces.length === 0
-              ? [{ id: spaceNow(), count: 0 }]
-              : spaces
             const scene = graphScene
 
             /** 展开的实体：图上点圆点、列表里点名字，共用这一块（在画布下方）。 */
@@ -1604,17 +1784,8 @@ window.__ModuleLoader__.load({
 
             return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
               h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
-                h('label', { style: { fontSize: '11px', opacity: 0.65, display: 'flex', alignItems: 'center', gap: '4px' } },
-                  '空间',
-                  h('select', {
-                    value: spaceNow(),
-                    onChange: (e) => setGraphSpace(e.target.value),
-                    style: { fontSize: '11px', padding: '1px 4px', borderRadius: '4px', border: '1px solid currentColor', background: 'transparent', color: 'inherit' },
-                  }, ...spaceList.map((sp) => h('option', { key: sp.id, value: sp.id }, `${sp.id} · ${sp.count ?? 0} 条`)))),
-                h('span', { style: metaStyle },
-                  scene === null
-                    ? `实体 ${total} 个 · 边 ${links.length} 条`
-                    : `实体 ${scene.stats.nodes} 个${omitted > 0 ? `（省略 ${omitted}）` : ''} · 边 ${scene.stats.edgesTotal} 条，画前 ${scene.stats.edgesDrawn} 条`),
+                // 空间下拉搬到页面顶部了（一个控制管整页），这里只留排法/视图/边数。
+                h('span', { style: metaStyle }, `空间 ${spaceNow()}`),
                 h('button', {
                   type: 'button',
                   title: '换一种排法（影响取哪几个实体）',
@@ -1632,8 +1803,13 @@ window.__ModuleLoader__.load({
                       style: { fontSize: '11px', padding: '1px 4px', borderRadius: '4px', border: '1px solid currentColor', background: 'transparent', color: 'inherit' },
                     }, ...[40, 80, 120, 200, 400].map((n) => h('option', { key: n, value: n }, `${n} 条`)))),
               ),
+              // 图/列表上方那行统计：实体、边、这次实际画了几条，一眼对得上画面。
               nodes.length === 0
-                ? h('p', { style: { fontSize: '12px', opacity: 0.6, margin: 0 } }, '这段记忆里还没攒出实体，等记忆再多一点。')
+                ? null
+                : h('p', { style: { fontSize: '11px', opacity: 0.6, margin: 0, lineHeight: 1.5 } },
+                  `实体 ${scene === null ? nodes.length : scene.stats.nodes}${omitted > 0 ? `（省略 ${omitted}）` : ''} · 边 ${links.length} · 本次画 ${scene === null ? 0 : scene.stats.edgesDrawn} 条边`),
+              nodes.length === 0
+                ? emptyBox('这个空间还没有实体。', '实体由图谱重建时从原文里抽，抽不出名字就攒不出点；记忆够多、名字够重复才会出现。')
                 : graphMode === 'graph' ? renderGraph() : renderList(),
               nodes.length > 0 && links.length === 0
                 ? h('p', { style: { fontSize: '11px', opacity: 0.5, margin: 0, lineHeight: 1.6 } },
@@ -1645,7 +1821,9 @@ window.__ModuleLoader__.load({
 
           if (zone === 'spaces') {
             const list = Array.isArray(data.spaces) ? data.spaces : []
-            if (list.length === 0) return h('p', { style: { fontSize: '12px', opacity: 0.55 } }, '还没有空间记录。')
+            if (list.length === 0) {
+              return emptyBox('还没有空间记录。', '空间是写入时贴的标签；一条记忆都还没进来，也就没有可分的格子。')
+            }
             const spaceFailed = spaceSave !== undefined && spaceSave !== null && spaceSave.status === 'error'
             return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
               h('p', { style: { fontSize: '11px', opacity: 0.55, margin: 0 } },
@@ -1705,57 +1883,66 @@ window.__ModuleLoader__.load({
               )))
           }
 
-          if (items.length === 0) return h('p', { style: { fontSize: '12px', opacity: 0.55 } }, '这条区是空的。')
-          return h('ol', { style: { display: 'flex', flexDirection: 'column', gap: '10px', margin: 0, padding: '0 0 0 18px' } },
-            ...items.map((item) => h('li', { key: String(item.id), style: { fontSize: '12px', lineHeight: 1.5 } },
-              h('div', { style: { fontSize: '11px', opacity: 0.5, fontFamily: 'monospace' } },
-                `${fmtTime(item.at)} · 权重 ${Math.round(item.weight * 10) / 10}${
-                  (item.emo ?? []).length === 0 ? '' : ` · ${(item.emo ?? []).map((k) => EMO_TEXT[k] ?? k).join('/')}`
-                }`),
-              h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, item.user),
-              item.assistant === '' ? null
-                : h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', opacity: 0.55 } }, item.assistant),
-              h('div', { style: { display: 'flex', gap: '10px', marginTop: '2px' } },
-                h('button', {
-                  type: 'button',
-                  onClick: async () => {
-                    const next = window.prompt('改成什么？（只改用户侧那条）', item.user)
-                    if (next === null || next.trim() === '') return
-                    const ok = await postJson('/dsh-whale-memory/entries/correct', { id: item.id, text: next })
-                    if (ok) setSeq((n) => n + 1)
-                  },
-                  style: { border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '11px', opacity: 0.55, padding: 0, color: 'inherit' },
-                }, '改'),
-                h('button', {
-                  type: 'button',
-                  onClick: async () => {
-                    if (!window.confirm('撤回这条记忆？原件会留在 revisions 里。')) return
-                    const ok = await postJson('/dsh-whale-memory/entries/retract', { id: item.id })
-                    if (ok) setSeq((n) => n + 1)
-                  },
-                  style: { border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '11px', opacity: 0.55, padding: 0, color: 'inherit' },
-                }, '撤回'),
-              ),
-            )))
+          // 热区 / 冷区：一条记忆两行（摘要 + 元信息），点开才看全文。
+          if (items.length === 0) {
+            return emptyBox(
+              zone === 'hot' ? '热区是空的。' : '冷区是空的。',
+              zone === 'hot'
+                ? '热区为空：最近没有命中。热区按召回与权重重分层，命中过才会进来。'
+                : '冷区为空：记忆要么都还在热区，要么这个空间还没写过东西。',
+            )
+          }
+          return h('ol', { style: { display: 'flex', flexDirection: 'column', margin: 0, padding: 0, listStyle: 'none' } },
+            ...items.map((item) => entryRow(item, {
+              open: memOpen === item.id,
+              onToggle: () => setMemOpen(memOpen === item.id ? null : item.id),
+              onCorrect: async () => {
+                const next = window.prompt('改成什么？（只改用户侧那条）', item.user)
+                if (next === null || next.trim() === '') return
+                const ok = await postJson('/dsh-whale-memory/entries/correct', { id: item.id, text: next })
+                if (ok) setSeq((n) => n + 1)
+              },
+              onRetract: async () => {
+                if (!window.confirm('撤回这条记忆？原件会留在 revisions 里。')) return
+                const ok = await postJson('/dsh-whale-memory/entries/retract', { id: item.id })
+                if (ok) setSeq((n) => n + 1)
+              },
+            })))
         })()
 
         return h(
-          // 用 div 不用 section：这块现在挂在「它现在怎么想我」那条 tabpanel 里头，
+          // 用 div 不用 section：这块挂在「记忆内容」那条 tabpanel 里，
           // `<section>` 套 `<section>` 让「哪块是这一页」变得要数深度，不值当。
           'div',
           { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-          h('h3', { style: { fontSize: '13px', margin: '0 0 2px' } }, '记忆内容'),
-          h(
-            'p',
-            { style: { fontSize: '11px', opacity: 0.6, margin: '0 0 4px' } },
-            '只读预览。热区最近在用，冷区想起时才取用；点标签切换。',
-          ),
+          // ── 空间选择：下拉看哪个空间 + 当前空间的条目数徽标 + 热/冷占比条 ──
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+            h('label', { style: { fontSize: '11px', opacity: 0.65, display: 'flex', alignItems: 'center', gap: '4px' } },
+              '空间',
+              h('select', {
+                value: spaceNow(),
+                onChange: (e) => { setGraphSpace(e.target.value); setMemOpen(null) },
+                title: '看哪个空间（只影响这一页看到的东西，不改配置）',
+                style: { fontSize: '11px', padding: '1px 4px', borderRadius: '4px', border: '1px solid currentColor', background: 'transparent', color: 'inherit' },
+              }, ...(spaces === null || spaces.length === 0
+                ? [{ id: spaceNow(), count: null }]
+                : spaces).map((sp) => h('option', { key: sp.id, value: sp.id },
+                sp.count === null ? sp.id : `${sp.id} · ${sp.count} 条`)))),
+            h('span', { style: badgeStyle },
+              spaces === null
+                ? '条数读取中'
+                : `${spaceNow()} ${(spaces.find((s) => s.id === spaceNow())?.count ?? 0)} 条`),
+            spaces !== null && spaces.length > 1 && spaceNow() !== (currentSpace || 'default')
+              ? h('span', { style: { fontSize: '10px', opacity: 0.5 } }, `配置里的当前空间是 ${currentSpace || 'default'}（切空间在「空间」那一栏）`)
+              : null),
+          // 两段色条：热/冷各占多少。没数的时候整块不出现，下面另有空状态说明。
+          countBar(settled ? data.counts : null),
           actErr === ''
             ? null
             : h('p', { style: { fontSize: '11px', color: '#ff8f8f', margin: '0 0 4px', lineHeight: 1.5 } }, actErr),
           h(
             'div',
-            { style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', flexWrap: 'wrap' } },
+            { style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '2px 0', flexWrap: 'wrap' } },
             tab('hot', '热区'),
             tab('cold', '冷区'),
             tab('scenes', '场景'),
@@ -2273,8 +2460,9 @@ window.__ModuleLoader__.load({
           if (zone.id === 'diag') coreBody.push(diagCounter)
           for (const item of coreFields) coreBody.push(renderFieldRow(item.group, item.field))
           for (const action of coreActions) coreBody.push(renderActionRow(action))
-          // 记忆内容（热区/冷区/场景/画像/图谱）是「现状」，跟着第一页走。
-          if (zone.id === ZONES[0].id) {
+          // 记忆内容（热区/冷区/场景/画像/图谱/空间）自己占一页：
+          // 第一页只留状态条 + 只读预览，翻东西到这一页来。
+          if (zone.id === 'content') {
             coreBody.push(h(EntriesView, {
               key: 'entries',
               // 配置里的空间，不是「最后一条记忆的 space」——后者会随写入漂走，
@@ -2390,6 +2578,8 @@ window.__ModuleLoader__.load({
       TAB_KEY, parseTabHash, tabOf,
       // 图谱几何也是纯函数：测试和 scripts/graph-svg.mjs 借这一口直接调，不复制布局代码。
       graphScene: buildGraphScene, graphLabel: glLabel, GL_W, GL_H, CAM_MIN, CAM_MAX, GL_LABEL_ZOOM,
+      // 记忆内容那几块的小构件：验收脚本直接渲染它们（页面走的也是这几份，不复制）。
+      entryRow, entryMetaText, countBar, emptyBox, sameDay,
     }
     exports.apply = apply
     return module.exports

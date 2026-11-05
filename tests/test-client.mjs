@@ -153,14 +153,14 @@ const html = renderToStaticMarkup(React.createElement(registration.component))
 const visibleText = (markup) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
 
 for (const text of [
-  // 四个区（按「我要干什么」分）+ 顶部锚点导航
-  '它现在怎么想我', '记忆怎么收', '怎么被叫醒', '危险与诊断',
+  // 五个区（按「我要干什么」分）+ 顶部锚点导航
+  '它现在怎么想我', '记忆怎么收', '记忆内容', '怎么被叫醒', '危险与诊断',
   // 常用项：默认就摊开，不用点
   '记账开关', '一天最多说几次', '注入字符上限', '当前空间',
   '热区保留轮数', '每天最多注入几次', '每轮最多想起几条',
   '群聊自动落盘', '落盘间隔', '周记', '备份一份',
-  // 记忆内容那一栏
-  '记忆内容', '热区', '冷区', '只读',
+  // 记忆内容那一栏（现在自己占一页）
+  '热区', '冷区', '场景', '画像', '图谱', '空间',
 ]) {
   assert.ok(html.includes(text), `页面里应该出现「${text}」`)
 }
@@ -250,19 +250,20 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
 
   // 1) 键名与 slug 是写死的契约：改了就换一条书签，得让测试叫一声。
   assert.equal(TAB_KEY, 'whale-memory.settings.tab', 'localStorage 的键名')
-  assert.deepEqual(Z.map((z) => z.slug), ['mood', 'memory', 'wake', 'diag'], '四条页签的 hash 名字，按顺序')
+  assert.deepEqual(Z.map((z) => z.slug), ['mood', 'memory', 'content', 'wake', 'diag'], '五条页签的 hash 名字，按顺序')
+  assert.deepEqual(Z.map((z) => z.id), ['now', 'intake', 'content', 'wake', 'diag'], '记忆内容排在「记忆怎么收」后面')
 
-  // 2) 页签条：四个名字按顺序、每个都是 role="tab"。
+  // 2) 页签条：五个名字按顺序、每个都是 role="tab"。
   const barStart = html.indexOf('role="tablist"')
   assert.ok(barStart > 0, '页签条要有 role="tablist"')
   const barHtml = html.slice(barStart, html.indexOf('</div>', barStart))
   assert.deepEqual([
     ...barHtml.matchAll(/role="tab"[^>]*>([^<]+)</g),
-  ].map((m) => m[1]), ['它现在怎么想我', '记忆怎么收', '怎么被叫醒', '危险与诊断'], '页签条四个名字按顺序')
+  ].map((m) => m[1]), ['它现在怎么想我', '记忆怎么收', '记忆内容', '怎么被叫醒', '危险与诊断'], '页签条五个名字按顺序')
   assert.ok(/id="dsh-whale-memory-tab-mood"[^>]*aria-selected="true"/.test(html), '默认停在第一页（mood 高亮）')
   assert.equal((html.match(/aria-selected="true"/g) ?? []).length, 1, '只有一条页签是高亮的')
   assert.equal((html.match(/tabindex="0"/g) ?? []).length, 1, '只有当前页签进 Tab 序列（其余 tabindex=-1）')
-  assert.equal((html.match(/tabindex="-1"/g) ?? []).length, 3, '其余三条页签 tabindex=-1')
+  assert.equal((html.match(/tabindex="-1"/g) ?? []).length, 4, '其余四条页签 tabindex=-1')
 
   // 3) 四页都渲染，只给非当前页加 hidden——卸载会把没保存的草稿丢掉。
   const panels = {}
@@ -273,25 +274,33 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
     assert.ok(m[0].includes(`aria-labelledby="dsh-whale-memory-tab-${slug}"`), `${slug} 面板指向自己的页签`)
     panels[slug] = { html: html.slice(m.index + m[0].length, html.indexOf('</section>', m.index)), hidden: /\shidden(=""|\s|>)/.test(m[0]) }
   }
-  assert.deepEqual(Object.keys(panels), ['mood', 'memory', 'wake', 'diag'], '四页都在 DOM 里')
+  assert.deepEqual(Object.keys(panels), ['mood', 'memory', 'content', 'wake', 'diag'], '五页都在 DOM 里')
   assert.equal(panels.mood.hidden, false, '当前页不 hidden')
-  for (const slug of ['memory', 'wake', 'diag']) assert.equal(panels[slug].hidden, true, `${slug} 是隐藏而不是没渲染`)
+  for (const slug of ['memory', 'content', 'wake', 'diag']) assert.equal(panels[slug].hidden, true, `${slug} 是隐藏而不是没渲染`)
 
   // 4) 隐藏页里的控件照样在——切回来时草稿还在。
   assert.ok(panels.memory.html.includes('注入字符上限'), '隐藏的页里控件仍在（只隐藏不卸载）')
   // 这一套假件里 fetch 一律失败，所以预览走「读不到状态」那一支——文案换，位置不变。
   assert.ok(panels.mood.html.includes('下面是配置项'), '第一页有只读预览')
   assert.ok(panels.diag.html.includes('下面是配置项'), '诊断页有自己那条计数（spk 覆盖率，读不到时写读不到）')
+  // 「记忆内容」一页：库里的东西搬过来了，第一页不再有列表。
+  for (const text of ['热区', '冷区', '场景', '画像', '图谱', '空间']) {
+    assert.ok(panels.content.html.includes(text), `记忆内容页要有「${text}」`)
+  }
+  assert.ok(panels.content.html.includes('全部空间'), '记忆内容页有空间的全部/单空间开关')
+  assert.ok(!panels.mood.html.includes('全部空间'), '第一页不再挂记忆列表')
+  assert.ok(!panels.mood.html.includes('冷区'), '第一页不再挂冷区列表')
 
   // 5) 状态条只在第一页：其余页一个「今日注入」都不许有。
   assert.ok(panels.mood.html.includes('今日注入'), '状态条在第一页顶部')
-  for (const slug of ['memory', 'wake', 'diag']) {
+  for (const slug of ['memory', 'content', 'wake', 'diag']) {
     assert.ok(!panels[slug].html.includes('今日注入'), `${slug} 页不重复状态条`)
   }
 
   // 6) hash 与 localStorage 都是纯函数：四条 slug、区 id 别名、脏数据。
   assert.equal(parseTabHash('#tab=mood'), 'now')
   assert.equal(parseTabHash('#tab=memory'), 'intake')
+  assert.equal(parseTabHash('#tab=content'), 'content', '记忆内容页的 hash')
   assert.equal(parseTabHash('#tab=wake'), 'wake')
   assert.equal(parseTabHash('#tab=diag'), 'diag')
   assert.equal(parseTabHash('#tab=intake'), 'intake', '老书签用区 id 也认')
@@ -300,6 +309,7 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
   assert.equal(parseTabHash('#nope'), undefined, '认不出返回 undefined（不抛）')
   assert.equal(parseTabHash(''), undefined)
   assert.equal(parseTabHash(undefined), undefined)
+  assert.equal(tabOf('content'), 'content', '记忆内容页 slug → 区 id')
   assert.equal(tabOf('mood'), 'now', 'slug → 区 id')
   assert.equal(tabOf('DIAG'), 'diag', '大小写不敏感')
   assert.equal(tabOf(undefined), 'now', '认不出回第一页')
@@ -315,9 +325,67 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
     return { core, adv }
   }
   assert.deepEqual(Z.map((z) => countOf(z.id)), [
-    { core: 2, adv: 3 }, { core: 8, adv: 14 }, { core: 2, adv: 7 }, { core: 1, adv: 6 },
-  ], '四页的常用/高级项数')
+    { core: 2, adv: 3 }, { core: 8, adv: 14 }, { core: 0, adv: 0 }, { core: 2, adv: 7 }, { core: 1, adv: 6 },
+  ], '五页的常用/高级项数（记忆内容一页没有配置项）')
   assert.ok(Z.every((z) => countOf(z.id).core <= 14), '每页常用 ≤14 项')
+}
+
+// ---- 记忆内容：一条记忆两行（摘要 + 元信息）、热冷色条、空状态 ----
+{
+  const { entryRow, entryMetaText, countBar, emptyBox, sameDay } = plugin.__test
+  const nowMs = Date.now()
+  const item = {
+    id: 7, at: nowMs - 60000, weight: 3.2, emo: ['tired'], user: '这一句是摘要，点开才看全文',
+    assistant: '嗯，我在。', space: 'default', spk: 'abcdef123456', imp: null,
+    hits: 4, tier: 1, lastHit: nowMs, hot: false,
+  }
+  const meta = entryMetaText(item)
+  for (const part of ['default', 'abcdef12', '自动', '命中 4 次', 'tier 1', '最后想起', '冷区']) {
+    assert.ok(meta.includes(part), `元信息要有「${part}」：${meta}`)
+  }
+  assert.ok(!meta.includes('abcdef123'), 'spk 只取前 8 位')
+  assert.ok(!meta.includes('\n'), '元信息一行排完')
+
+  // 收起：正好两行（摘要 / 元信息），全文不出现。
+  const closed = renderToStaticMarkup(entryRow(item, { open: false }))
+  const closedText = visibleText(closed).trim()
+  assert.ok(closedText.includes('这一句是摘要'), '第一行是摘要')
+  assert.ok(closedText.includes('命中 4 次'), '第二行是元信息')
+  assert.ok(!closedText.includes('嗯，我在。'), '收着的时候不摊全文')
+  assert.ok(!closedText.includes('撤回'), '收着的时候不显示写入口')
+  assert.equal((closed.match(/nowrap/g) ?? []).length >= 2, true, '两行都按一行排（nowrap）')
+
+  // 展开：全文 + 写入口都出来，摘要行仍是同一句。
+  const open = renderToStaticMarkup(entryRow(item, { open: true }))
+  const openText = visibleText(open).trim()
+  assert.ok(openText.includes('这一句是摘要'), '展开后摘要还在')
+  assert.ok(openText.includes('嗯，我在。'), '展开后能看到助手那句')
+  assert.ok(openText.includes('改') && openText.includes('撤回'), '展开后才有改/撤回')
+
+  // imp 有值就写数值，NULL 写「自动」。
+  assert.ok(entryMetaText({ ...item, imp: 6 }).includes(' · 6 · '), 'imp 有值写数值')
+  assert.ok(entryMetaText({ ...item, imp: null }).includes('自动'), 'imp 为 NULL 写「自动」')
+  // 没命中过 / 热区 也说得出来。
+  const cold = entryMetaText({ ...item, lastHit: 0, hot: true, hits: 0 })
+  assert.ok(cold.includes('还没被想起') && cold.includes('热区'), '没命中过与热区都要写出来')
+
+  // 热冷色条：两段按条数分宽，数字写在旁边。
+  const bar = renderToStaticMarkup(countBar({ hot: 30, cold: 1914 }))
+  assert.ok(bar.includes('flex:30 1 0'), '热区那段按 30 分宽')
+  assert.ok(bar.includes('flex:1914 1 0'), '冷区那段按 1914 分宽')
+  assert.ok(visibleText(bar).includes('热 30') && visibleText(bar).includes('冷 1914'), '条旁边写数字')
+  assert.equal(renderToStaticMarkup(countBar({ hot: 0, cold: 0 })), '', '两边都是 0 时不出色条')
+
+  // 空状态：一句「还没有」+ 一句为什么。
+  const empty = visibleText(renderToStaticMarkup(emptyBox('热区是空的。', '热区为空：最近没有命中。')))
+  assert.ok(empty.includes('热区是空的。'), '空状态第一句说「还没有什么」')
+  assert.ok(empty.includes('最近没有命中'), '空状态第二句说为什么')
+
+  // 「今天触发过没有」按本地日历日算。
+  assert.equal(sameDay(nowMs), true, '现在算今天')
+  assert.equal(sameDay(0), false, '没命中过不算今天')
+  assert.equal(sameDay(nowMs - 86400000), false, '昨天不算今天')
+  console.log('OK 记忆内容两行/色条/空状态')
 }
 
 // ---- 记忆内容只读 + 只读态要说清怎么改 ----

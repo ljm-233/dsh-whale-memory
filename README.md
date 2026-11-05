@@ -55,18 +55,19 @@ node scripts/check-all.mjs
 
 ## 设置页
 
-「鲸娘记忆」分**四条页签**（一个区一页），页签条吸顶，当前页签高亮，点一下或按 `←/→` 切页，不刷新：
+「鲸娘记忆」分**五条页签**（一个区一页），页签条吸顶，当前页签高亮，点一下或按 `←/→` 切页，不刷新：
 
 | 页签 | hash | 放什么 |
 | --- | --- | --- |
-| 它现在怎么想我 | `#tab=mood` | 状态条 + 只读预览（这一轮会带什么进上下文）+ 情绪那几道闸 + 记忆内容 |
+| 它现在怎么想我 | `#tab=mood` | 状态条 + 只读预览（这一轮会带什么进上下文）+ 情绪那几道闸 |
 | 记忆怎么收 | `#tab=memory` | 注入字符上限 / 空间 / 热区轮数 / 想起几条 / 落盘与周记 …… |
+| 记忆内容 | `#tab=content` | 热区 / 冷区 / 场景 / 画像 / 图谱 / 空间（库里的东西，没设置项） |
 | 怎么被叫醒 | `#tab=wake` | 主动消息（日上限、多久算安静）、免打扰、夜班 |
 | 危险与诊断 | `#tab=diag` | 说话人覆盖率计数 + 备份按钮（常用）；公式、场景、调试开关在高级里 |
 
 - **URL 可分享**：`#tab=memory` 这类地址直接打开就落在那一页（也认旧的区 id：`#tab=intake`）。
-- **记住上次那一页**：`localStorage['whale-memory.settings.tab']`，存的区 id（`now|intake|wake|diag`）；hash 优先于它。
-- **切页不丢输入**：四页全部渲染，非当前页只加 `hidden`（`display:none`），不卸载——没提交的草稿是行内组件的状态，卸载就没了。
+- **记住上次那一页**：`localStorage['whale-memory.settings.tab']`，存的区 id（`now|intake|content|wake|diag`）；hash 优先于它。
+- **切页不丢输入**：五页全部渲染，非当前页只加 `hidden`（`display:none`），不卸载——没提交的草稿是行内组件的状态，卸载就没了。
 - **状态条只在第一页顶部**；各页自己的计数写在自己页里（例如诊断页的 spk 覆盖率）。
 - 页签条是半透明灰 + `backdrop-filter`，不写死主题色；只用 `kind:'select'` 等现有控件，没引任何 UI 库。
 - 结构细节（页签 ↔ 区 ↔ 分组、切页三条通路、为什么「只隐藏不卸载」）见 [`docs/settings-page.md`](docs/settings-page.md)。
@@ -92,10 +93,16 @@ node scripts/check-all.mjs
 
 这几项的默认值只有一份：`lib/dump-config.mjs` 的 `LAYER_DEFAULTS`。
 
-**记忆内容**那一栏（热区 / 冷区 / 场景 / 画像 / 图谱 / 空间）是只读预览，接口都在 `http://127.0.0.1:3080/dsh-whale-memory/` 下：
+**记忆内容**（`#tab=content`）是库里的东西，接口都在 `http://127.0.0.1:3080/dsh-whale-memory/` 下：
 `status`、`entries`、`scenes`、`persona`、`graph`、`graph/entity`、`spaces`、`trend`、`timeline`、`conflicts`、`backups`。
 其中 **图谱** 是「谁和谁总一起出现」的共现统计：`GET /graph?space=&limit=&sort=` 给实体（`name/count/lastHit/degree`）与边（`a/b/weight`），
 `GET /graph/entity?name=&space=&limit=` 点进去看这个实体最近几条记忆（查不到 404）。
+
+这一页的排法（每条记忆两行：摘要 / `空间 · 来源 · imp · 命中 · tier · 最后想起 · 在哪一区`；
+热冷两段纯 CSS 占比条；空间下拉带条目数；场景标「今天触发过没有」；画像列事实原文；
+图上方一行 `实体 N · 边 M · 本次画 K 条边`；每块都有「还没有 + 为什么」的空状态）见
+[`docs/settings-page.md`](docs/settings-page.md) 第五节。`/entries` 为此多回了
+`counts{hot,cold}` 与 `space/spk/imp/hits/tier/lastHit/hot` 七个字段（只加字段，老客户端不看也不坏）。
 页面默认是**力导向关系图**（原生 SVG，可缩放 0.3×～4×、拖动平移、标签避让，零依赖），右上角可切「列表」。
 算法、阈值（共现 ≥ 2 次才成边）、字段、交互键位见 `docs/GRAPH.md`。
 场景那行「最近召回」来自 `entries.lastHit`（`memory_recall` 真把条目交回模型时写），没被召回过就写「还没被召回」。
