@@ -57,11 +57,11 @@ const CANONICAL_ROOT = join(homedir(), '.dsh', 'im', 'whale-memory')
  * 占位符：`__HOME__` → 家目录，`__NODE__` → 当前 node 可执行文件，
  *         `__INTERVAL_MIN__` → 设置页里的落盘间隔分钟数。
  */
-function renderGroupDumpUnits(outDir, opts = {}) {
-  const home = opts.home ?? homedir()
-  const nodePath = opts.node ?? process.execPath
-  const layerCfg = loadLayerConfig({ configFile: opts.configFile ?? flagValue('config') })
-  const interval = opts.intervalMinutes ?? layerCfg.groupDump.intervalMinutes
+function renderGroupDumpUnits(outDir) {
+  const home = homedir()
+  const nodePath = process.execPath
+  const layerCfg = loadLayerConfig({ configFile: flagValue('config') })
+  const interval = layerCfg.groupDump.intervalMinutes
   mkdirSync(outDir, { recursive: true })
   const written = []
   for (const name of GROUP_DUMP_UNITS) {
@@ -149,7 +149,7 @@ console.log(`校验通过：${report.packages.length} 个包 / ${total} 个文�
 // 可选：第二层自动落盘的 systemd 单元（不给 --with-group-dump 就一个字都不动）
 if (flag('with-group-dump')) {
   const unitDir = join(homedir(), '.config', 'systemd', 'user')
-  const files = renderGroupDumpUnits(unitDir, { home: homedir(), node: process.execPath })
+  const files = renderGroupDumpUnits(unitDir)
   for (const f of files) console.log(`渲染 ${f}`)
   try {
     execFileSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'inherit' })

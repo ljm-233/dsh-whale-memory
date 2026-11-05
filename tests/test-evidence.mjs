@@ -3,7 +3,7 @@
  *
  * 覆盖：新条目落库后 `entry_evidence` 有两行（user / assistant，都指回 entry_id）、
  * 原文超过 500 字会被截断、`memory_recall` 的 full 模式出现「证据：」、
- * 默认 card 模式一个字节都不多、`countOrphanEvidence` 只数不删。
+ * 默认 card 模式一个字节都不多。
  *
  * 跑法：node tests/test-evidence.mjs
  */
@@ -17,7 +17,6 @@ import { DatabaseSync } from 'node:sqlite'
 import { apply } from '../lib/index.mjs'
 import { createWriter } from '../lib/writer.mjs'
 import { registerTools } from '../lib/tools.mjs'
-import { countOrphanEvidence } from '../lib/tidy.mjs'
 
 let pass = 0
 let fail = 0
@@ -68,7 +67,7 @@ const writer = createWriter({
   check('entry_evidence 有四个字段', JSON.stringify(cols) === JSON.stringify(['entry_id', 'source', 'source_kind', 'created']), JSON.stringify(cols))
   const idx = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='entry_evidence'").all()
   check('entry_id 上有索引', idx.some((r) => r.name === 'idx_entry_evidence_entry'), JSON.stringify(idx))
-  check('空的证据表不报错', countOrphanEvidence(db) === 0)
+  check('空的证据表就是零行', Number(db.prepare('SELECT COUNT(*) c FROM entry_evidence').get().c) === 0)
 }
 
 // ---- 2. 落库一行条目 → 两行证据 ----
@@ -128,13 +127,12 @@ const BOT_LINE = '扫完记得备份，别只留一份在那台机器上'
   check('card 还是六字段卡', /^#[0-9a-f]{1,6} /u.test(String(card.items[0]?.card ?? '')), String(card.items[0]?.card))
 }
 
-// ---- 5. 计数只读：数得出来，不删行 ----
+// ---- 5. 孤儿证据只是留在表里，不自动消失 ----
 {
   db.prepare('INSERT INTO entry_evidence(entry_id, source, source_kind, created) VALUES(?,?,?,?)')
     .run(999999, '孤儿证据', 'user', Date.now())
-  const before = Number(db.prepare('SELECT COUNT(*) c FROM entry_evidence').get().c)
-  check('数出孤儿证据', countOrphanEvidence(db) === 1, String(countOrphanEvidence(db)))
-  check('没删任何行', Number(db.prepare('SELECT COUNT(*) c FROM entry_evidence').get().c) === before)
+  const orphan = db.prepare('SELECT COUNT(*) c FROM entry_evidence e LEFT JOIN entries ON entries.id = e.entry_id WHERE entries.id IS NULL').get()
+  check('孤儿证据还在表里', Number(orphan.c) === 1, String(orphan.c))
 }
 
 db.close()
