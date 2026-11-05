@@ -199,6 +199,433 @@ window.__ModuleLoader__.load({
       done.catch(() => undefined)
     }
 
+  // ───────────────────────── 图谱几何（纯函数，无 DOM、无随机） ─────────────────────────
+  // 浏览器这边没有打包步骤，只能单文件放着；但这一段不碰 React 也不碰 DOM，
+  // 测试和 scripts/graph-svg.mjs 都从 __test 里直接调它——所以「画成什么样」可复现、可校验。
+  const GL_W = 900
+  const GL_H = 620
+  const GL_PAD = 64
+  const GL_FONT = 11
+  const GL_MIN_FONT = 8
+  const GL_LINE = 1.35
+  const GL_MAX_LABEL_W = 104
+  const GL_PUSH = 10
+  const GL_PUSH_MAX = 5
+  const GL_TOP = 5
+  const GL_LABEL_ZOOM = 0.6
+  const GL_EDGE_DEFAULT = 120
+  /** 两个圆点之间至少留多少空隙（除了各自的半径）：标签就压在点上方，挤在一起必压字。 */
+  const GL_MIN_SEP = 28
+  /** 点离画布边至少留多少（标签要放得下）。 */
+  const GL_EDGE = 30
+  const CAM_MIN = 0.3
+  const CAM_MAX = 4
+
+  const glR2 = (v) => Math.round(v * 100) / 100
+
+  /** 名字 → 32 位哈希（FNV-1a）：同一个名字永远同一个值，布局不随刷新乱跳。 */
+  const glHash = (s) => {
+    let x = 0x811c9dc5
+    for (let i = 0; i < s.length; i += 1) {
+      x ^= s.charCodeAt(i)
+      x = Math.imul(x, 0x01000193) >>> 0
+    }
+    return x >>> 0
+  }
+
+  /** 种子定、序列定的 PRNG；力导向里任何一处「随机」都从这里来。 */
+  const glRand = (seed) => {
+    let s = (seed >>> 0) || 0x9e3779b9
+    return () => {
+      s = (s ^ (s << 13)) >>> 0
+      s = (s ^ (s >>> 17)) >>> 0
+      s = (s ^ (s << 5)) >>> 0
+      return s / 4294967296
+    }
+  }
+
+  /** 力导向：Fruchterman-Reingold 两步（斥力 k²/d、引力 d²/k）+ 向心力，固定迭代次数。 */
+  const glForce = (nodes, edges, W, H) => {
+    const pos = new Map()
+    for (const nd of nodes) {
+      const h0 = glHash(nd.name)
+      // 相位与半径都由名字决定：同一个库、同一批实体，初始位置永远一样。
+      const ang = ((h0 % 4096) / 4096) * Math.PI * 2
+      const rad = 40 + glRand(h0)() * Math.min(W, H) * 0.32
+      pos.set(nd.name, { x: W / 2 + Math.cos(ang) * rad, y: H / 2 + Math.sin(ang) * rad })
+    }
+    const pairs = [...pos.entries()]
+    const n = pairs.length
+    const k = Math.sqrt((W * H) / Math.max(1, n)) * 0.62
+    const iters = n <= 60 ? 260 : n <= 120 ? 180 : 120
+    const disp = new Map()
+    for (let it = 0; it < iters; it += 1) {
+      const temp = Math.max(1, (1 - it / iters) * W * 0.05)
+      for (const [name] of pairs) disp.set(name, { x: 0, y: 0 })
+      for (let i = 0; i < n; i += 1) {
+        const [na, pa] = pairs[i]
+        for (let j = i + 1; j < n; j += 1) {
+          const [nb, pb] = pairs[j]
+          let dx = pa.x - pb.x
+          let dy = pa.y - pb.y
+          let d2 = dx * dx + dy * dy
+          if (d2 < 0.01) {
+            dx = 0.1 + (i % 3) * 0.1
+            dy = 0.1 + (j % 3) * 0.1
+            d2 = dx * dx + dy * dy
+          }
+          const d = Math.sqrt(d2)
+          const f = (k * k) / d
+          const da = disp.get(na)
+          const db = disp.get(nb)
+          da.x += (dx / d) * f
+          da.y += (dy / d) * f
+          db.x -= (dx / d) * f
+          db.y -= (dy / d) * f
+        }
+      }
+      for (const e of edges) {
+        const pa = pos.get(e.a)
+        const pb = pos.get(e.b)
+        if (pa === undefined || pb === undefined) continue
+        const dx = pb.x - pa.x
+        const dy = pb.y - pa.y
+        const d = Math.max(0.01, Math.sqrt(dx * dx + dy * dy))
+        // 弹簧只拉到「自然长度 k」为止。d²/k 那种写法在 120 条边的图上会把点全吸成一个团
+        // （斥力是逐对求和、引力却按边直接加，量级压不过）。
+        const f = (d - k) * 0.06
+        const da = disp.get(e.a)
+        const db = disp.get(e.b)
+        da.x += (dx / d) * f
+        da.y += (dy / d) * f
+        db.x -= (dx / d) * f
+        db.y -= (dy / d) * f
+      }
+      for (const [name, p] of pairs) {
+        const dd = disp.get(name)
+        dd.x += (W / 2 - p.x) * 0.02
+        dd.y += (H / 2 - p.y) * 0.02
+        const len = Math.sqrt(dd.x * dd.x + dd.y * dd.y)
+        if (len > 0.0001) {
+          const step = Math.min(len, temp)
+          p.x += (dd.x / len) * step
+          p.y += (dd.y / len) * step
+        }
+      }
+    }
+    return pos
+  }
+
+  /**
+   * 力导向收尾：把挨得太近的点推开，给标签腾地方（标签在点正上方，点太挤就必然压字）。
+   * 纯推开式松弛，方向只取决于坐标与下标，没有随机：同一份数据结果一样。
+   */
+  const glSeparate = (pos, radiusOf, rounds = 24) => {
+    const names = [...pos.keys()]
+    for (let round = 0; round < rounds; round += 1) {
+      let moved = false
+      for (let i = 0; i < names.length; i += 1) {
+        const pa = pos.get(names[i])
+        for (let j = i + 1; j < names.length; j += 1) {
+          const pb = pos.get(names[j])
+          const need = GL_MIN_SEP + (radiusOf.get(names[i]) ?? 5) + (radiusOf.get(names[j]) ?? 5)
+          const dx = pb.x - pa.x
+          const dy = pb.y - pa.y
+          const d = Math.sqrt(dx * dx + dy * dy)
+          if (d >= need) continue
+          // 完全重合时按下标取一个确定的方向，别用随机数。
+          const ux = d < 0.01 ? Math.cos(i + j) : dx / d
+          const uy = d < 0.01 ? Math.sin(i + j) : dy / d
+          const step = (need - d) / 2 + 0.5
+          pa.x -= ux * step
+          pa.y -= uy * step
+          pb.x += ux * step
+          pb.y += uy * step
+          moved = true
+        }
+      }
+      if (!moved) break
+    }
+    return pos
+  }
+
+  /** 收进画布：留一点边，别让标签贴着框飞出去。 */
+  const glClamp = (pos, W, H) => {
+    const out = new Map()
+    for (const [name, p] of pos) {
+      out.set(name, {
+        x: glR2(Math.min(W - GL_EDGE, Math.max(GL_EDGE, p.x))),
+        y: glR2(Math.min(H - GL_EDGE, Math.max(GL_EDGE, p.y))),
+      })
+    }
+    return out
+  }
+
+  /** 把布局整体缩放平移进画布（按半径留出边），坐标统一取两位小数。 */
+  const glFit = (pos, radiusOf, W, H, pad) => {
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const [name, p] of pos) {
+      const r = radiusOf.get(name) ?? 5
+      minX = Math.min(minX, p.x - r)
+      maxX = Math.max(maxX, p.x + r)
+      minY = Math.min(minY, p.y - r)
+      maxY = Math.max(maxY, p.y + r)
+    }
+    if (!Number.isFinite(minX)) return pos
+    const bw = Math.max(1, maxX - minX)
+    const bh = Math.max(1, maxY - minY)
+    const s = Math.min((W - pad * 2) / bw, (H - pad * 2) / bh, 1.6)
+    const cx = (minX + maxX) / 2
+    const cy = (minY + maxY) / 2
+    const out = new Map()
+    for (const [name, p] of pos) {
+      out.set(name, { x: glR2(W / 2 + (p.x - cx) * s), y: glR2(H / 2 + (p.y - cy) * s) })
+    }
+    return out
+  }
+
+  /** 半径分五档（按 count 与最大值的比例），不做连续缩放。 */
+  const glRadius = (count, maxCount) => {
+    const t = maxCount <= 0 ? 0 : Math.max(0, Math.min(1, count / maxCount))
+    if (t >= 0.75) return 16
+    if (t >= 0.45) return 12.5
+    if (t >= 0.22) return 9.5
+    if (t >= 0.08) return 7
+    return 5
+  }
+
+  /** 边粗分四档（按 weight 与最大值的比例）。 */
+  const glEdgeWidth = (w, maxW) => {
+    const t = maxW <= 0 ? 0 : Math.max(0, Math.min(1, w / maxW))
+    if (t >= 0.8) return 3.2
+    if (t >= 0.55) return 2.4
+    if (t >= 0.3) return 1.6
+    if (t >= 0.15) return 1
+    return 0.6
+  }
+
+  /** 单字符宽度（em）：CJK/全角 1，拉丁 0.56，空格 0.3。够准，且不量 DOM。 */
+  const glCharEm = (ch) => {
+    const c = ch.codePointAt(0) ?? 0
+    if (c === 32) return 0.3
+    if (c < 0x2e80) return 0.56
+    return 1
+  }
+  const glTextW = (s, fs) => {
+    let w = 0
+    for (const ch of s) w += glCharEm(ch) * fs
+    return w
+  }
+  /** 拉丁串只在空格/连字符/分隔符后断；中文逐字断。 */
+  const glBreakable = (ch) => ch === ' ' || ch === '-' || ch === '_' || ch === '/' || ch === ':' || ch === '.' || ch === '·' || ch === '、' || ch === '，'
+
+  /** 折行到宽度上限以内。完整保留原文，一个字都不丢（不打省略号）。 */
+  const glWrap = (name, fs, maxW) => {
+    const width = (arr) => glTextW(arr.join(''), fs)
+    const lines = []
+    let cur = []
+    for (const ch of [...name]) {
+      if (cur.length === 0) { cur.push(ch); continue }
+      if (width([...cur, ch]) <= maxW) { cur.push(ch); continue }
+      let cut = cur.length
+      if ((ch.codePointAt(0) ?? 0) < 0x2e80) {
+        for (let i = cur.length - 1; i > 0; i -= 1) {
+          if (glBreakable(cur[i - 1])) { cut = i; break }
+        }
+      }
+      lines.push(cur.slice(0, cut).join(''))
+      cur = cur.slice(cut)
+      cur.push(ch)
+      while (cur.length > 1 && width(cur) > maxW) {
+        let k = cur.length
+        while (k > 1 && width(cur.slice(0, k - 1)) > maxW) k -= 1
+        lines.push(cur.slice(0, k).join(''))
+        cur = cur.slice(k)
+      }
+    }
+    if (cur.length > 0) lines.push(cur.join(''))
+    return lines.length === 0 ? [name] : lines
+  }
+
+  /**
+   * 一条标签：先按 11px 折行；超过两行就把字号往下压到 8px，再不行就多占一行。
+   * 任何情况下都**不截断**——宁可多一行小字，也不把名字改短。
+   */
+  const glLabel = (name, maxW = GL_MAX_LABEL_W) => {
+    let fs = GL_FONT
+    let lines = glWrap(name, fs, maxW)
+    while (lines.length > 2 && fs > GL_MIN_FONT) {
+      fs -= 1
+      lines = glWrap(name, fs, maxW)
+    }
+    const lineHeight = glR2(fs * GL_LINE)
+    return {
+      lines,
+      fontSize: fs,
+      lineHeight,
+      w: Math.max(...lines.map((l) => glTextW(l, fs))),
+      h: Math.max(1, lines.length) * lineHeight,
+    }
+  }
+
+  /**
+   * 标签摆放：圆点正上方居中，然后贪心避让——
+   * 按「度 → 次数 → 名字」排序逐个放；和已放的矩形重叠就沿法线推开 10px，最多 5 次；
+   * 推到画布边上就翻到另一侧（点下方）继续推。
+   */
+  const glPlaceLabels = (items, opts) => {
+    const W = opts.width
+    const H = opts.height
+    const showAll = opts.showAll !== false
+    const order = [...items].sort((a, b) => b.degree - a.degree
+      || b.count - a.count
+      || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    const always = new Set(order.slice(0, GL_TOP).map((it) => it.name))
+    const boxes = []
+    const out = new Map()
+    for (const it of order) {
+      if (!showAll && !always.has(it.name)) continue
+      const lab = it.label
+      let x = it.x - lab.w / 2
+      let y = it.y - it.r - 6 - lab.h
+      x = Math.min(W - lab.w - 2, Math.max(2, x))
+      y = Math.min(H - lab.h - 2, Math.max(2, y))
+      let dir = -1
+      for (let push = 0; push < GL_PUSH_MAX; push += 1) {
+        const hit = boxes.find((b) => !(x + lab.w + 1 <= b.x
+          || b.x + b.w + 1 <= x
+          || y + lab.h + 1 <= b.y
+          || b.y + b.h + 1 <= y))
+        if (hit === undefined) break
+        // 沿「压得最浅的那条轴」的法线推开 10px（上下压得浅就上下推，左右压得浅就左右推）；
+        // 推到画布边上就换另一条轴，最多 5 次。
+        const overY = Math.min(y + lab.h, hit.y + hit.h) - Math.max(y, hit.y)
+        const overX = Math.min(x + lab.w, hit.x + hit.w) - Math.max(x, hit.x)
+        if (overY <= overX) {
+          const ny = y + dir * GL_PUSH
+          if (ny < 2 || ny + lab.h > H - 2) {
+            dir = -dir
+            x += (x + lab.w / 2 >= hit.x + hit.w / 2 ? GL_PUSH : -GL_PUSH)
+          } else {
+            y = ny
+          }
+        } else {
+          const nx = x + (x + lab.w / 2 >= hit.x + hit.w / 2 ? GL_PUSH : -GL_PUSH)
+          if (nx < 2 || nx + lab.w > W - 2) {
+            y += (y + lab.h / 2 >= hit.y + hit.h / 2 ? GL_PUSH : -GL_PUSH)
+          } else {
+            x = nx
+          }
+        }
+      }
+      y = Math.min(H - lab.h - 2, Math.max(2, y))
+      boxes.push({ x, y, w: lab.w, h: lab.h })
+      out.set(it.name, {
+        lines: lab.lines,
+        fontSize: lab.fontSize,
+        lineHeight: lab.lineHeight,
+        x: glR2(x),
+        y: glR2(y),
+        w: glR2(lab.w),
+        h: glR2(lab.h),
+      })
+    }
+    return out
+  }
+
+  /**
+   * 一张图要画的东西：点的坐标与半径、要画的边（按 weight 取前 N 条）、标签位置。
+   * 纯函数：同样的输入 → 完全一样的输出（测试就靠这一条）。
+   */
+  const buildGraphScene = (input, opts = {}) => {
+    const W = opts.width ?? GL_W
+    const H = opts.height ?? GL_H
+    const edgeMax = Math.max(1, Number(opts.edgeMax) || GL_EDGE_DEFAULT)
+    const showAll = opts.showAll !== false
+    const nodes = (Array.isArray(input?.nodes) ? input.nodes : [])
+      .filter((n) => n !== null && typeof n?.name === 'string' && n.name !== '')
+    const byName = new Map(nodes.map((n) => [n.name, n]))
+    const allEdges = (Array.isArray(input?.edges) ? input.edges : [])
+      .filter((e) => e !== null && byName.has(e?.a) && byName.has(e?.b) && e.a !== e.b)
+      .map((e) => ({ a: e.a, b: e.b, w: Number(e.weight ?? e.w ?? 0) || 0 }))
+      .sort((x, y) => y.w - x.w
+        || (x.a < y.a ? -1 : x.a > y.a ? 1 : 0)
+        || (x.b < y.b ? -1 : x.b > y.b ? 1 : 0))
+    const edges = allEdges.slice(0, edgeMax)
+    const localDeg = new Map(nodes.map((n) => [n.name, 0]))
+    for (const e of allEdges) {
+      localDeg.set(e.a, (localDeg.get(e.a) ?? 0) + 1)
+      localDeg.set(e.b, (localDeg.get(e.b) ?? 0) + 1)
+    }
+    const maxCount = nodes.reduce((m, n) => Math.max(m, Number(n.count) || 0), 0)
+    const radiusOf = new Map(nodes.map((n) => [n.name, glRadius(Number(n.count) || 0, maxCount)]))
+    // 顺序要紧：先缩放进画布，再在**画布像素**上推开——反过来的话，推开后整体一缩放，
+    // 间距又按比例缩回去，等于白推。
+    const fit = glFit(glForce(nodes.map((n) => ({ name: n.name })), edges, W, H), radiusOf, W, H, GL_PAD)
+    const pos = glClamp(glSeparate(fit, radiusOf), W, H)
+    const maxW = edges.reduce((m, e) => Math.max(m, e.w), 1)
+    const drawn = edges.map((e) => {
+      const pa = pos.get(e.a) ?? { x: W / 2, y: H / 2 }
+      const pb = pos.get(e.b) ?? { x: W / 2, y: H / 2 }
+      const ra = radiusOf.get(e.a) ?? 5
+      const rb = radiusOf.get(e.b) ?? 5
+      const dx = pb.x - pa.x
+      const dy = pb.y - pa.y
+      const d = Math.max(0.01, Math.sqrt(dx * dx + dy * dy))
+      const ux = dx / d
+      const uy = dy / d
+      const t = maxW <= 0 ? 0 : e.w / maxW
+      return {
+        a: e.a,
+        b: e.b,
+        w: e.w,
+        x1: glR2(pa.x + ux * ra),
+        y1: glR2(pa.y + uy * ra),
+        x2: glR2(pb.x - ux * rb),
+        y2: glR2(pb.y - uy * rb),
+        width: glEdgeWidth(e.w, maxW),
+        opacity: glR2(0.12 + 0.5 * t),
+      }
+    })
+    const items = nodes.map((n) => {
+      const p = pos.get(n.name) ?? { x: W / 2, y: H / 2 }
+      return {
+        name: n.name,
+        x: p.x,
+        y: p.y,
+        r: radiusOf.get(n.name) ?? 5,
+        count: Number(n.count) || 0,
+        // 度：接口给了就用接口的（整张图的度），没给才退回本次这批边算出来的局部度。
+        // 注意接口的 0 是「真的一条边都没有」，不能当成「没给」。
+        degree: (() => {
+          const raw = n.degree
+          if (raw !== undefined && raw !== null && Number.isFinite(Number(raw))) return Number(raw)
+          return localDeg.get(n.name) ?? 0
+        })(),
+        label: glLabel(n.name),
+      }
+    })
+    const labels = glPlaceLabels(items, { width: W, height: H, showAll })
+    return {
+      width: W,
+      height: H,
+      nodes: items.map((it) => ({ ...it, label: labels.get(it.name) ?? null })),
+      edges: drawn,
+      stats: {
+        nodes: items.length,
+        edgesTotal: allEdges.length,
+        edgesDrawn: drawn.length,
+        labels: labels.size,
+        showAll,
+      },
+    }
+  }
+  // ───────────────────────── /图谱几何 ─────────────────────────
+
+
     const apply = (ctx) => {
       const React = require('react')
       const h = React.createElement
@@ -238,6 +665,7 @@ window.__ModuleLoader__.load({
       const labelStyle = { display: 'flex', flexDirection: 'column', gap: '2px', minWidth: '0' }
       const nameStyle = { fontSize: '13px' }
       const metaStyle = { fontSize: '11px', opacity: 0.6, fontFamily: 'monospace' }
+
 
       /** 一行设置：标签 + 控件 + 覆盖标记。 */
       const Row = ({ field, value, overridden, disabled, onWrite, onReset }) => {
@@ -373,6 +801,13 @@ window.__ModuleLoader__.load({
         const [spaces, setSpaces] = React.useState(null)
         const [entity, setEntity] = React.useState(null)
         const [memOpen, setMemOpen] = React.useState(null)
+        // 图谱：图 / 列表两条视图，图是默认；画多少条边；相机的缩放平移。
+        const [graphMode, setGraphMode] = React.useState('graph')
+        const [graphEdges, setGraphEdges] = React.useState(GL_EDGE_DEFAULT)
+        const [cam, setCam] = React.useState({ k: 1, x: 0, y: 0 })
+        const [hover, setHover] = React.useState(null)
+        const svgRef = React.useRef(null)
+        const panRef = React.useRef(null)
 
         /** 这一页现在看的是哪个空间：没手动选就是设置里那个。 */
         const spaceNow = () => (graphSpace !== '' ? graphSpace : (currentSpace || 'default'))
@@ -429,6 +864,33 @@ window.__ModuleLoader__.load({
         // 换页签的瞬间旧数据还在，用它渲染会读错字段、也会撞 key。
         const settled = data !== null && dataZone === zone
         const items = settled ? (data.items ?? []) : []
+
+        // 图谱几何只随「数据 / 边数 / 缩放档」重算：拖拽平移每帧都重排会卡。
+        const graphScene = React.useMemo(() => {
+          if (data === null || dataZone !== 'graph') return null
+          return buildGraphScene(data, { edgeMax: graphEdges, showAll: cam.k >= GL_LABEL_ZOOM })
+        }, [data, dataZone, graphEdges, cam.k >= GL_LABEL_ZOOM])
+
+        // 滚轮缩放挂原生监听：React 的 onWheel 是 passive 的，preventDefault 会被忽略，
+        // 缩放时整页跟着滚。
+        React.useEffect(() => {
+          const el = svgRef.current
+          if (el === null) return undefined
+          const onWheel = (ev) => {
+            ev.preventDefault()
+            const rect = el.getBoundingClientRect()
+            if (rect.width <= 0 || rect.height <= 0) return
+            const mx = ((ev.clientX - rect.left) / rect.width) * GL_W
+            const my = ((ev.clientY - rect.top) / rect.height) * GL_H
+            setCam((c) => {
+              const next = Math.min(CAM_MAX, Math.max(CAM_MIN, c.k * (ev.deltaY < 0 ? 1.15 : 1 / 1.15)))
+              const f = next / c.k
+              return { k: next, x: mx - (mx - c.x) * f, y: my - (my - c.y) * f }
+            })
+          }
+          el.addEventListener('wheel', onWheel, { passive: false })
+          return () => el.removeEventListener('wheel', onWheel)
+        }, [zone, graphMode, settled, graphScene])
 
         const body = (() => {
           if (failed) return h('p', { style: { fontSize: '12px', opacity: 0.7 } }, '读不到记忆库。')
@@ -518,43 +980,202 @@ window.__ModuleLoader__.load({
             const spaceList = spaces === null || spaces.length === 0
               ? [{ id: spaceNow(), count: 0 }]
               : spaces
-            const rows = nodes.map((n) => {
-              const opened = entity !== null && entity.name === n.name
-              const mine = (around.get(n.name) ?? []).slice(0, 5)
-              const last = Number(n.lastHit ?? 0)
-              return h('li', { key: n.name, style: { padding: '4px 0', borderBottom: '1px solid rgba(128,128,128,0.12)' } },
-                h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px' } },
-                  h('button', { type: 'button', onClick: () => openEntity(n.name), style: { ...linkStyle, fontSize: '12px' } },
-                    `${opened ? '▾' : '▸'} ${n.name}`),
-                  h('span', { style: { fontSize: '11px', opacity: 0.5, fontFamily: 'monospace', flexShrink: 0 } },
-                    `${n.count ?? 0} 条 · 度 ${n.degree ?? 0} · ${last > 0 ? `最近出现在 ${fmtTime(last)}` : '还没记到时间'}`),
-                ),
-                mine.length === 0 ? null
-                  : h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '2px 12px', marginTop: '2px' } },
-                    ...mine.map((e) => h('button', {
-                      key: e.other,
-                      type: 'button',
-                      title: '切到这个实体',
-                      onClick: () => openEntity(e.other),
-                      style: { ...linkStyle, fontSize: '11px', opacity: 0.7 },
-                    }, `${n.name} ↔ ${e.other} ×${e.w}`))),
-                !opened ? null
-                  : entity.items === null
-                    ? h('p', { style: { fontSize: '11px', opacity: 0.55, margin: '2px 0 0' } }, '读取中…')
-                    : entity.items.length === 0
-                      ? h('p', { style: { fontSize: '11px', opacity: 0.55, margin: '2px 0 0' } }, '这个名字下暂时查不到原文。')
-                      : h('ol', { style: { display: 'flex', flexDirection: 'column', gap: '4px', margin: '2px 0 0', padding: '0 0 0 16px' } },
-                        ...entity.items.map((it) => h('li', { key: String(it.id), style: { fontSize: '11px', lineHeight: 1.5 } },
-                          h('div', {
-                            onClick: () => setMemOpen(memOpen === it.id ? null : it.id),
-                            style: { cursor: 'pointer', opacity: 0.85 },
-                          }, `${fmtTime(it.t)} · ${it.u}`),
-                          memOpen === it.id && String(it.a ?? '') !== ''
-                            ? h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', opacity: 0.5 } }, it.a)
-                            : null,
-                        ))),
+            const scene = graphScene
+
+            /** 展开的实体：图上点圆点、列表里点名字，共用这一块（在画布下方）。 */
+            const entityPanel = entity === null ? null : h('div', {
+              style: {
+                border: '1px solid rgba(128,128,128,0.25)', borderRadius: '6px',
+                padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: '4px',
+              },
+            },
+              h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' } },
+                h('span', { style: { fontSize: '12px' } }, `● ${entity.name}`),
+                h('span', { style: { fontSize: '11px', opacity: 0.5, fontFamily: 'monospace' } },
+                  entity.items === null ? '读取中…' : `最近 ${entity.items.length} 条`),
+              ),
+              entity.items === null
+                ? h('p', { style: { fontSize: '11px', opacity: 0.55, margin: 0 } }, '读取中…')
+                : entity.items.length === 0
+                  ? h('p', { style: { fontSize: '11px', opacity: 0.55, margin: 0 } }, '这个名字下暂时查不到原文。')
+                  : h('ol', { style: { display: 'flex', flexDirection: 'column', gap: '4px', margin: 0, padding: '0 0 0 16px' } },
+                    ...entity.items.map((it) => h('li', { key: String(it.id), style: { fontSize: '11px', lineHeight: 1.5 } },
+                      h('div', {
+                        onClick: () => setMemOpen(memOpen === it.id ? null : it.id),
+                        style: { cursor: 'pointer', opacity: 0.85 },
+                      }, `${fmtTime(it.t)} · ${it.u}`),
+                      memOpen === it.id && String(it.a ?? '') !== ''
+                        ? h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', opacity: 0.5 } }, it.a)
+                        : null,
+                    ))),
+            )
+
+            /** 列表视图（上一版那一列，留着没删）：谁、几次、连了谁。 */
+            const renderList = () => {
+              const rows = nodes.map((n) => {
+                const opened = entity !== null && entity.name === n.name
+                const mine = (around.get(n.name) ?? []).slice(0, 5)
+                const last = Number(n.lastHit ?? 0)
+                return h('li', { key: n.name, style: { padding: '4px 0', borderBottom: '1px solid rgba(128,128,128,0.12)' } },
+                  h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px' } },
+                    h('button', { type: 'button', onClick: () => openEntity(n.name), style: { ...linkStyle, fontSize: '12px' } },
+                      `${opened ? '▾' : '▸'} ${n.name}`),
+                    h('span', { style: { fontSize: '11px', opacity: 0.5, fontFamily: 'monospace', flexShrink: 0 } },
+                      `${n.count ?? 0} 条 · 度 ${n.degree ?? 0} · ${last > 0 ? `最近出现在 ${fmtTime(last)}` : '还没记到时间'}`),
+                  ),
+                  mine.length === 0 ? null
+                    : h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '2px 12px', marginTop: '2px' } },
+                      ...mine.map((e) => h('button', {
+                        key: e.other,
+                        type: 'button',
+                        title: '切到这个实体',
+                        onClick: () => openEntity(e.other),
+                        style: { ...linkStyle, fontSize: '11px', opacity: 0.7 },
+                      }, `${n.name} ↔ ${e.other} ×${e.w}`))),
+                )
+              })
+              if (nodes.length === 0) {
+                return h('p', { style: { fontSize: '12px', opacity: 0.6, margin: 0 } }, '这段记忆里还没攒出实体，等记忆再多一点。')
+              }
+              return h('ol', { style: { display: 'flex', flexDirection: 'column', margin: 0, padding: 0, listStyle: 'none' } }, ...rows)
+            }
+
+            /**
+             * 图视图：原生 SVG + 手写力导向。坐标来自 buildGraphScene（纯函数、可复现），
+             * 这里只管把它画出来和接手势。
+             */
+            const renderGraph = () => {
+              if (scene === null) return null
+              // 悬停高亮：它的边、它的对端，其余压暗。
+              const lit = hover === null ? null : new Set(
+                [hover, ...scene.edges.filter((e) => e.a === hover || e.b === hover).flatMap((e) => [e.a, e.b])],
               )
-            })
+              const zoomBy = (f) => setCam((c) => {
+                const next = Math.min(CAM_MAX, Math.max(CAM_MIN, c.k * f))
+                const g = next / c.k
+                const mx = GL_W / 2
+                const my = GL_H / 2
+                return { k: next, x: mx - (mx - c.x) * g, y: my - (my - c.y) * g }
+              })
+              const resetCam = () => setCam({ k: 1, x: 0, y: 0 })
+              const panDown = (ev) => {
+                if (ev.button !== 0) return
+                panRef.current = { x: ev.clientX, y: ev.clientY, cam }
+                if (typeof ev.currentTarget.setPointerCapture === 'function') {
+                  ev.currentTarget.setPointerCapture(ev.pointerId)
+                }
+              }
+              const panMove = (ev) => {
+                const from = panRef.current
+                if (from === null) return
+                const el = svgRef.current
+                const rect = el === null ? null : el.getBoundingClientRect()
+                if (rect === null || rect.width <= 0 || rect.height <= 0) return
+                // 屏幕像素 → viewBox 像素：画布宽度是缩放的，得换算，不然拖起来发飘。
+                setCam({
+                  k: from.cam.k,
+                  x: from.cam.x + (ev.clientX - from.x) * (GL_W / rect.width),
+                  y: from.cam.y + (ev.clientY - from.y) * (GL_H / rect.height),
+                })
+              }
+              const panUp = () => { panRef.current = null }
+              const camBtn = (label, title, onClick) => h('button', {
+                type: 'button', title, onClick,
+                style: {
+                  border: '1px solid currentColor', borderRadius: '6px', padding: '1px 7px',
+                  fontSize: '12px', lineHeight: 1.4, background: 'rgba(0,0,0,0.04)',
+                  color: 'inherit', cursor: 'pointer', opacity: 0.85,
+                },
+              }, label)
+              return h('div', { style: { position: 'relative' } },
+                h('div', { style: { position: 'relative' } },
+                  h('svg', {
+                    ref: svgRef,
+                    viewBox: `0 0 ${GL_W} ${GL_H}`,
+                    role: 'img',
+                    'aria-label': `实体关系图：${scene.stats.nodes} 个实体，画了 ${scene.stats.edgesDrawn} 条边`,
+                    onPointerDown: panDown,
+                    onPointerMove: panMove,
+                    onPointerUp: panUp,
+                    onPointerCancel: panUp,
+                    onDoubleClick: resetCam,
+                    style: {
+                      width: '100%', height: 'auto', display: 'block',
+                      border: '1px solid rgba(128,128,128,0.2)', borderRadius: '6px',
+                      touchAction: 'none', userSelect: 'none',
+                      cursor: panRef.current === null ? 'grab' : 'grabbing',
+                    },
+                  },
+                    h('g', {
+                      transform: `translate(${glR2(cam.x)} ${glR2(cam.y)}) scale(${Math.round(cam.k * 1000) / 1000})`,
+                    },
+                      ...scene.edges.map((e, i) => {
+                        const near = hover !== null && (e.a === hover || e.b === hover)
+                        return h('line', {
+                          key: `e${i}`,
+                          x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2,
+                          stroke: 'currentColor',
+                          strokeOpacity: lit !== null && !near ? 0.04 : Math.min(0.9, e.opacity + (near ? 0.35 : 0)),
+                          strokeWidth: near ? e.width + 0.8 : e.width,
+                          style: { pointerEvents: 'none' },
+                        })
+                      }),
+                      ...scene.nodes.map((n) => {
+                        const on = lit === null || lit.has(n.name)
+                        const picked = entity !== null && entity.name === n.name
+                        return h('g', {
+                          key: n.name,
+                          onPointerEnter: () => setHover(n.name),
+                          onPointerLeave: () => setHover(null),
+                          // 点圆点只开实体面板，不开平移：把事件挡住，别冒到画布上。
+                          onPointerDown: (ev) => ev.stopPropagation(),
+                          onClick: () => openEntity(n.name),
+                          style: { cursor: 'pointer', opacity: on ? 1 : 0.22 },
+                        },
+                          h('circle', {
+                            cx: n.x, cy: n.y, r: n.r,
+                            fill: 'currentColor',
+                            fillOpacity: picked ? 0.55 : 0.22,
+                            stroke: 'currentColor',
+                            strokeOpacity: picked || hover === n.name ? 0.95 : 0.45,
+                            strokeWidth: picked || hover === n.name ? 1.4 : 0.8,
+                          }),
+                          // 全名放 title 里：标签怎么折行，悬停/无障碍读到的都是原文。
+                          h('title', null, n.name),
+                          ...(n.label === null ? [] : n.label.lines.map((line, i) => h('text', {
+                            key: `t${i}`,
+                            x: glR2(n.label.x + n.label.w / 2),
+                            y: glR2(n.label.y + n.label.lineHeight * i + n.label.fontSize),
+                            textAnchor: 'middle',
+                            fontSize: n.label.fontSize,
+                            fill: 'currentColor',
+                            fillOpacity: picked || hover === n.name ? 0.95 : 0.72,
+                            style: { pointerEvents: 'none' },
+                          }, line))),
+                        )
+                      }),
+                    ),
+                  ),
+                  h('div', { style: { position: 'absolute', top: '6px', right: '6px', display: 'flex', gap: '4px' } },
+                    camBtn('＋', '放大（也可以滚轮）', () => zoomBy(1.25)),
+                    camBtn('－', '缩小（也可以滚轮）', () => zoomBy(0.8)),
+                    camBtn('复位', '回到 1×（也可以双击画布）', resetCam)),
+                ),
+                h('p', { style: { fontSize: '11px', opacity: 0.55, margin: '4px 0 0' } },
+                  `滚轮缩放（以鼠标那点为中心，${CAM_MIN}×～${CAM_MAX}×）· 按住拖动平移 · 双击复位 · 缩放到 ${GL_LABEL_ZOOM}× 以上显示全部名字（度最高的 ${GL_TOP} 个一直显示）· 点圆点看它名下最近 5 条`),
+              )
+            }
+
+            const viewTab = (key, label) => h('button', {
+              type: 'button',
+              onClick: () => setGraphMode(key),
+              style: {
+                border: '1px solid currentColor', borderRadius: '6px', padding: '2px 10px',
+                fontSize: '11px', cursor: 'pointer', color: 'inherit', background: 'transparent',
+                opacity: graphMode === key ? 1 : 0.5,
+              },
+            }, label)
+
             return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
               h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
                 h('label', { style: { fontSize: '11px', opacity: 0.65, display: 'flex', alignItems: 'center', gap: '4px' } },
@@ -565,21 +1186,34 @@ window.__ModuleLoader__.load({
                     style: { fontSize: '11px', padding: '1px 4px', borderRadius: '4px', border: '1px solid currentColor', background: 'transparent', color: 'inherit' },
                   }, ...spaceList.map((sp) => h('option', { key: sp.id, value: sp.id }, `${sp.id} · ${sp.count ?? 0} 条`)))),
                 h('span', { style: metaStyle },
-                  `实体 ${total} 个${omitted > 0 ? `（列前 ${nodes.length}，省略 ${omitted}）` : ''} · 边 ${links.length} 条`),
+                  scene === null
+                    ? `实体 ${total} 个 · 边 ${links.length} 条`
+                    : `实体 ${scene.stats.nodes} 个${omitted > 0 ? `（省略 ${omitted}）` : ''} · 边 ${scene.stats.edgesTotal} 条，画前 ${scene.stats.edgesDrawn} 条`),
                 h('button', {
                   type: 'button',
-                  title: '换一种排法',
+                  title: '换一种排法（影响取哪几个实体）',
                   onClick: () => setGraphSort(graphSort === 'count' ? 'degree' : 'count'),
                   style: { border: '1px solid currentColor', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', background: 'transparent', color: 'inherit', cursor: 'pointer', opacity: 0.85 },
                 }, graphSort === 'count' ? '按出现次数排' : '按联系数排'),
+                h('div', { style: { display: 'flex', gap: '4px' } }, viewTab('graph', '图'), viewTab('list', '列表')),
+                graphMode !== 'graph' ? null
+                  : h('label', { style: { fontSize: '11px', opacity: 0.65, display: 'flex', alignItems: 'center', gap: '4px' } },
+                    '边',
+                    h('select', {
+                      value: graphEdges,
+                      onChange: (e) => setGraphEdges(Number(e.target.value)),
+                      title: '画权重最高的前几条边',
+                      style: { fontSize: '11px', padding: '1px 4px', borderRadius: '4px', border: '1px solid currentColor', background: 'transparent', color: 'inherit' },
+                    }, ...[40, 80, 120, 200, 400].map((n) => h('option', { key: n, value: n }, `${n} 条`)))),
               ),
               nodes.length === 0
                 ? h('p', { style: { fontSize: '12px', opacity: 0.6, margin: 0 } }, '这段记忆里还没攒出实体，等记忆再多一点。')
-                : h('ol', { style: { display: 'flex', flexDirection: 'column', margin: 0, padding: 0, listStyle: 'none' } }, ...rows),
+                : graphMode === 'graph' ? renderGraph() : renderList(),
               nodes.length > 0 && links.length === 0
                 ? h('p', { style: { fontSize: '11px', opacity: 0.5, margin: 0, lineHeight: 1.6 } },
                   '还没攒够共现，等记忆再多一点：一条边要被两条以上的记忆同时提到才留下（至少出现 2 次）。')
                 : null,
+              entityPanel,
             )
           }
 
@@ -997,7 +1631,11 @@ window.__ModuleLoader__.load({
     exports.name = 'dsh-whale-memory'
     exports.inject = ['slots']
     /** 纯函数，自检直接调，不用起浏览器。 */
-    exports.__test = { pick, writePath, resetPath, normalizeNumber, GROUPS }
+    exports.__test = {
+      pick, writePath, resetPath, normalizeNumber, GROUPS,
+      // 图谱几何也是纯函数：测试和 scripts/graph-svg.mjs 借这一口直接调，不复制布局代码。
+      graphScene: buildGraphScene, graphLabel: glLabel, GL_W, GL_H, CAM_MIN, CAM_MAX, GL_LABEL_ZOOM,
+    }
     exports.apply = apply
     return module.exports
   },

@@ -69,7 +69,8 @@ node scripts/check-all.mjs
 `status`、`entries`、`scenes`、`persona`、`graph`、`graph/entity`、`spaces`、`trend`、`timeline`、`conflicts`、`backups`。
 其中 **图谱** 是「谁和谁总一起出现」的共现统计：`GET /graph?space=&limit=&sort=` 给实体（`name/count/lastHit/degree`）与边（`a/b/weight`），
 `GET /graph/entity?name=&space=&limit=` 点进去看这个实体最近几条记忆（查不到 404）。
-算法、阈值（共现 ≥ 2 次才成边）、字段与页面形态见 `docs/GRAPH.md`。
+页面默认是**力导向关系图**（原生 SVG，可缩放 0.3×～4×、拖动平移、标签避让，零依赖），右上角可切「列表」。
+算法、阈值（共现 ≥ 2 次才成边）、字段、交互键位见 `docs/GRAPH.md`。
 场景那行「最近召回」来自 `entries.lastHit`（`memory_recall` 真把条目交回模型时写），没被召回过就写「还没被召回」。
 
 ## 环境
