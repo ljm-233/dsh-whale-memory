@@ -13,7 +13,7 @@
 | ① 建表/加列 | 已做 | `lib/speaker.mjs` 的 `ensureSpeakerColumns()`，挂在 `lib/index.mjs` 既有 `ensure*` 段（`ensureMoodTable` 之后）。`entries` 加 `spk TEXT NOT NULL DEFAULT ''` + `imp REAL` + `idx_entries_spk_t`；新表 `person(spk, space, name, aka, score, source, updated)` + `idx_person_name`（普通索引，`name` 不唯一）。重复执行安全。 |
 | ② 写入侧带说话人 | 已做（走 2b） | 探过了：`msg.source` **没有** `senderId`，只有 `{kind:'user'}`（证据见下）。所以走群档对齐：`lib/writer.mjs` 的 flush 里按「正文痕迹 → 群档 ±10 分钟唯一对齐 → 空串」解析，`INSERT` 多一列。开关 `speakerEnabled`（默认 `true`，热改），关掉就永远写空串；群档路径可用 `speakerGroupDb` 覆盖。 |
 | ③ 回填脚本 | 已做 | `scripts/backfill-speakers.mjs`：`--dry-run`（默认）/ `--apply` / `--limit N` / `--migrate`（库副本上补列用）/ `--db` / `--group-db`。只写 `spk` 一列。 |
-| 4. `person` 从 `认人.md`/群档生成 | **没做** | 表建好了，生成留在 P0-4（`lib/people.mjs`）。验收 SQL 里的 `person` 行是在 `/tmp` 副本上手工播种的（来源：群档 `sender_name`，只读），仓库本身不写这一张表。 |
+| 4. `person` 从 `认人.md`/群档生成 | 部分：真库已播种，生成器没做 | 真库 `person` 已按 `notes/认人.md` 手工播 7 行（`source='notes/认人.md'`，群档里另有两位只认号码的 `source='group-history'`），验收 SQL 能跑。自动生成仍在 P0-4（`lib/people.mjs`）：仓库代码本身还不写这一张表，`rebuildGraph` 里的 `person_topic` 也还没接。 |
 | 5. 三维纯函数（`lib/axes.mjs`） | 已做（P0-5） | 原型 `/tmp/brain-proto/axes.mjs` 整体搬进 `lib/axes.mjs`（SCENE / `relevanceAxis` / `importanceAxis` / `timeAxis` / `axesOf` / `scoreEntry` 一字未改，另加 `sceneOf` / `detectScene` / `resolveScene`），并**接进召回**（见下节）。 |
 | P1 / P2 | **没做** | 照分期表。 |
 
@@ -23,7 +23,7 @@
 - `packages/api/session-controller/src/index.ts:479-484` —— RPC `prompt` 组出来的 source 只有 `kind` / `rpcId` / `clientTimeZone?` / `principal?`（`principal` 是远端身份，不是 IM 的 openid）。
 - `@xmanrui/dsh-im` 的 `source()`（`src/channels/qq/qq-bridge.mjs:732`）喂的是**正文**：`enhanceContextContent` 把它渲染成 `<dsh_im_source>{…}</dsh_im_source>` 块写进 prompt（`src/channels/shared/context-enhancement.mjs`，默认 `enabled:false`）。所以信封里的 senderId 落在**文字**里，不落在 `msg.source` 上。
 
-**老数据回填实测（1951 条库的 `/tmp` 副本，1819 条候选）**：正则 51（2.8%）、对齐 924（50.8%）、歧义 1、无解 741、太短不判 102；最终覆盖 975 / 1819 = **53.6%**（留空 46.4%）。留空主要来自两处：`u` 为空或只有我这侧的条目（132 条，不在候选里），以及群档里根本没有这句（早期会话换过库/跨窗口批量输入）。
+**真库覆盖率（2026-11-05 23:39 实跑，`~/.dsh/miyu/db/memory.db`，1984 条库 / 1834 条候选）**：正则 51（2.8%）、对齐 924（50.4%）、歧义 1、无解 753、太短不判 105；最终覆盖 **975 / 1834 = 53.2%**（留空 46.8%）。落库后 `spk<>''` 975 条、`count(distinct spk)` 7 个、`length(spk)` 只有 8。备份：`memory.db.bak-20261105-233951`（`cp`）与 `memory.db.backup-20261105-233951`（`.backup`，含 WAL），均 14,188,544 字节、`integrity_check` ok。`person` 已按 `notes/认人.md` 播种 7 行真数据（ARK / 梁 两个 spk 同名 `ARK`，鲸鱼姬的 `aka` 含 鱼鱼 / 大肥鱼 / 鲸鲸），验收 SQL 因此可跑：**40 行**（LIMIT 40 打满），首行 `鲸鱼姬 | 2026-11-04 | 3232 | <@1C282365D18006B61447EB7ACB963F60…`。此前的 `/tmp` 副本实测（1951 条库 / 1819 候选）覆盖 975 / 1819 = 53.6%——分子相同，分母多了 15 条新条目。留空主要来自两处：`u` 为空或只有我这侧的条目（132 条，不在候选里），以及群档里根本没有这句（早期会话换过库/跨窗口批量输入）。
 
 **覆盖率口径的两条已知偏差**：
 

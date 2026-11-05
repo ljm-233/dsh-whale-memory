@@ -108,6 +108,13 @@ window.__ModuleLoader__.load({
         long: '热区/冷区原文（可改、可撤回）、成段的场景、画像、实体关系图、按空间分开看。只读为主，写入口各自带一次确认。',
       },
       {
+        id: 'people',
+        slug: 'people',
+        title: '人',
+        hint: '谁说过话、说过几句、最近一次。',
+        long: '人从认人表（person）和记忆里的说话人（entries.spk）长出来。顶上一行统计 + 覆盖率：spk 是空串的记忆表示「不知道谁说的」，不算到任何人头上，覆盖率低的时候会照实写出来。',
+      },
+      {
         id: 'wake',
         slug: 'wake',
         title: '怎么被叫醒',
@@ -126,8 +133,8 @@ window.__ModuleLoader__.load({
     /**
      * 页签：一个区就是一页，五个区五条页签。
      *
-     *   地址栏  `#tab=<slug>`（mood / memory / content / wake / diag）——分享给别人打开落在同一页
-     *   本地    localStorage[`whale-memory.settings.tab`] 存区 id（now / intake / content / wake / diag）
+     *   地址栏  `#tab=<slug>`（mood / memory / content / people / wake / diag）——分享给别人打开落在同一页
+     *   本地    localStorage[`whale-memory.settings.tab`] 存区 id（now / intake / content / people / wake / diag）
      *
      * 两处都认不出时回第一页，不报错：脏书签不该把设置页搞成空白。
      */
@@ -1142,6 +1149,185 @@ window.__ModuleLoader__.load({
         h('div', { style: { fontSize: '10px', opacity: 0.55, whiteSpace: 'nowrap' } },
           `热 ${hot}（${pct(hot)}%） · 冷 ${cold}（${pct(cold)}%）`),
       )
+    }
+
+    // ───────────────── 人这一维 ─────────────────
+    /**
+     * 一张「人」的页要能同时说两件事，否则就是在撒谎：
+     *   1. 认人表里有哪些人（名字、又名、几条、最近一次）；
+     *   2. 这些数字**覆盖到多少记忆**——`spk` 空串是「不知道谁说的」，
+     *      不是某个人。覆盖率低的时候必须在顶上写出来，不许当成完整。
+     *
+     * 下面四个都是纯函数（数据进、元素出），验收脚本直接渲染它们，
+     * 页面走的也是同一份，不复制。
+     */
+
+    /** 顶部统计行：`N 个人 · 有名字 M · 只有号 K`。 */
+    const peopleCountLine = (stats) => {
+      const n = Math.max(0, Number(stats?.people ?? 0) || 0)
+      const named = Math.max(0, Number(stats?.named ?? 0) || 0)
+      const onlyId = Math.max(0, Number(stats?.onlyId ?? 0) || 0)
+      return `${n} 个人 · 有名字 ${named} · 只有号 ${onlyId}`
+    }
+
+    /** 覆盖率低于这个数就要说一句「很多记忆还不知道是谁说的」。 */
+    const PEOPLE_COVERAGE_FLOOR = 0.6
+
+    /**
+     * 覆盖率不足时的灰字。够了就返回 null（不写「覆盖率 100%」这种废话）。
+     *
+     * @param {object} stats `/people` 回来的 stats
+     * @returns {string|null} 一句话，或 null
+     */
+    const peopleCoverageNote = (stats) => {
+      const total = Math.max(0, Number(stats?.total ?? 0) || 0)
+      if (total === 0) return null
+      const cov = Math.max(0, Math.min(1, Number(stats?.coverage ?? 0) || 0))
+      if (cov >= PEOPLE_COVERAGE_FLOOR) return null
+      const pct = Math.round(cov * 1000) / 10
+      return `覆盖率 ${pct}%，很多记忆还不知道是谁说的`
+    }
+
+    /**
+     * 一个人：名字（或 8 位号）+ 条目数与最近一次 + 一行小字（又名 / 只有号 / 还没说过话）。
+     *
+     * 点名字展开——展开的内容由调用方塞进 `opts.children`（复用的是记忆行那套渲染）。
+     */
+    const peopleRow = (p, opts) => {
+      const open = opts?.open === true
+      const toggle = typeof opts?.onToggle === 'function' ? opts.onToggle : () => {}
+      const spk = String(p?.spk ?? '')
+      const name = String(p?.name ?? '').trim()
+      const count = Math.max(0, Number(p?.count ?? 0) || 0)
+      const lastAt = Number(p?.lastAt ?? 0) || 0
+      const aka = (Array.isArray(p?.aka) ? p.aka : []).map((x) => String(x ?? '').trim()).filter((x) => x !== '')
+      const parts = [count > 0 ? `${count} 条` : '还没说过话']
+      if (lastAt > 0) parts.push(`最近 ${fmtClock(lastAt)}`)
+      const notes = []
+      if (aka.length > 0) notes.push(`又名 ${aka.join(' / ')}`)
+      if (name === '') notes.push(`只有号 ${spk}，认人表里还没对上名字`)
+      else if (count === 0) notes.push('认人表里有他，但还没有一句归到名下')
+      return h('li', {
+        key: spk,
+        style: { padding: '3px 0', borderBottom: '1px solid rgba(128,128,128,0.12)' },
+      },
+      h('div', {
+        role: 'button',
+        tabIndex: 0,
+        title: open ? '收起' : '看他最近说过什么',
+        onClick: toggle,
+        onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() } },
+        style: {
+          fontSize: '12px', lineHeight: 1.5, cursor: 'pointer',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        },
+      },
+      `${open ? '▾' : '▸'} ${name === '' ? spk : name}`,
+      h('span', { style: { fontSize: '10px', opacity: 0.5, marginLeft: '6px' } }, parts.join(' · '))),
+      notes.length === 0
+        ? null
+        : h('div', { style: { fontSize: '10px', lineHeight: 1.5, opacity: 0.45 } }, notes.join(' · ')),
+      open ? (opts?.children ?? null) : null,
+      )
+    }
+
+    /**
+     * 「人」这一页的正文：统计行 → 覆盖率灰字 → 名单 / 空状态。
+     *
+     * @param {{people?:Array, stats?:object}|null} data `/people` 的返回；null = 还没到
+     * @param {{openSpk?:string, onToggle?:Function, entriesOf?:(spk:string)=>any}} [opts]
+     */
+    const peopleBody = (data, opts) => {
+      const stats = data?.stats ?? null
+      const list = Array.isArray(data?.people) ? data.people : []
+      const note = peopleCoverageNote(stats)
+      const head = h('div', { key: 'head', style: { display: 'flex', flexDirection: 'column', gap: '1px', padding: '0 0 3px' } },
+        h('p', { style: { fontSize: '12px', margin: 0 } }, stats === null ? '读取中' : peopleCountLine(stats)),
+        note === null
+          ? null
+          : h('p', { key: 'cov', style: { fontSize: '11px', opacity: 0.5, margin: 0, lineHeight: 1.5 } }, note))
+      if (data === null) return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } }, head)
+      if (list.length === 0) {
+        return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+          head,
+          emptyBox('还没有人。等说话人回填跑完再来。', '人是从 `person` 表和 `entries.spk` 里长出来的，两边都空的时候就先空着，不编。'))
+      }
+      const openSpk = String(opts?.openSpk ?? '')
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+        head,
+        h('ol', { style: { display: 'flex', flexDirection: 'column', margin: 0, padding: 0, listStyle: 'none' } },
+          ...list.map((p) => peopleRow(p, {
+            open: openSpk !== '' && openSpk === String(p?.spk ?? ''),
+            onToggle: () => (typeof opts?.onToggle === 'function' ? opts.onToggle(String(p?.spk ?? '')) : undefined),
+            children: typeof opts?.entriesOf === 'function' ? opts.entriesOf(String(p?.spk ?? '')) : null,
+          }))))
+    }
+
+    /**
+     * 「人」这一页：自己拉数据，展开某个人时再拉他最近 10 条。
+     *
+     * 展开的那 10 条直接用 `entryRow`（热区/冷区那一套）——同一份渲染，
+     * 不复制第二份字段映射；两处一漂，展开的内容就会和记忆内容页对不上。
+     */
+    const PeopleView = ({ currentSpace }) => {
+      const [data, setData] = React.useState(null)
+      const [failed, setFailed] = React.useState('')
+      const [seq, setSeq] = React.useState(0)
+      const [openSpk, setOpenSpk] = React.useState('')
+      const [entries, setEntries] = React.useState(null)
+      // 展开的某一条记忆（全文）：和记忆内容页一样，默认只看摘要。
+      const [memOpen, setMemOpen] = React.useState(null)
+      const space = String(currentSpace ?? 'default') || 'default'
+
+      React.useEffect(() => {
+        let alive = true
+        fetch(`/dsh-whale-memory/people?limit=50&space=${encodeURIComponent(space)}`, { headers: { accept: 'application/json' } })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((json) => { if (alive) { setFailed(json === null ? 'HTTP 没给数据' : ''); setData(json) } })
+          .catch((e) => { if (alive) { setFailed(String(e?.message ?? e)); setData(null) } })
+        return () => { alive = false }
+      }, [space, seq])
+
+      React.useEffect(() => {
+        if (openSpk === '') { setEntries(null); return undefined }
+        let alive = true
+        setEntries(null)
+        fetch(`/dsh-whale-memory/people/entries?spk=${encodeURIComponent(openSpk)}&limit=10`, { headers: { accept: 'application/json' } })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((json) => { if (alive) setEntries(json) })
+          .catch(() => { if (alive) setEntries({ spk: openSpk, total: 0, items: [] }) })
+        return () => { alive = false }
+      }, [openSpk, seq])
+
+      const toggle = (spk) => setOpenSpk((prev) => (prev === spk ? '' : spk))
+
+      const entriesOf = (spk) => {
+        if (String(spk) !== openSpk) return null
+        if (entries === null) return h('div', { style: { fontSize: '11px', opacity: 0.45, padding: '2px 0 4px' } }, '读取中')
+        const items = Array.isArray(entries?.items) ? entries.items : []
+        if (items.length === 0) {
+          return h('div', { style: { fontSize: '11px', opacity: 0.45, padding: '2px 0 4px' } }, '这个人名下还没有记忆。')
+        }
+        return h('ol', { style: { display: 'flex', flexDirection: 'column', margin: '1px 0 3px', padding: 0, listStyle: 'none' } },
+          ...items.map((item) => entryRow(item, {
+            open: memOpen === item.id,
+            onToggle: () => setMemOpen(memOpen === item.id ? null : item.id),
+          })))
+      }
+
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+          h('span', { style: badgeStyle }, `${space}`),
+          h('button', {
+            type: 'button',
+            onClick: () => setSeq((n) => n + 1),
+            title: '重新读一次',
+            style: { border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '11px', opacity: 0.6, padding: '2px 4px', color: 'inherit' },
+          }, '刷新')),
+        failed === ''
+          ? null
+          : h('p', { style: { fontSize: '11px', color: '#ff8f8f', margin: 0, lineHeight: 1.5 } }, `读取失败：${failed}`),
+        peopleBody(data, { openSpk, onToggle: toggle, entriesOf }))
     }
 
     const apply = (ctx) => {
@@ -2489,6 +2675,13 @@ window.__ModuleLoader__.load({
           for (const action of coreActions) coreBody.push(renderActionRow(action))
           // 记忆内容（热区/冷区/场景/画像/图谱/空间）自己占一页：
           // 第一页只留状态条 + 只读预览，翻东西到这一页来。
+          // 人自己占一页：只读，点开一个人看他最近十条（复用记忆行渲染）。
+          if (zone.id === 'people') {
+            coreBody.push(h(PeopleView, {
+              key: 'people',
+              currentSpace: memoryStatus?.spaceConfigured ?? memoryStatus?.space ?? 'default',
+            }))
+          }
           if (zone.id === 'content') {
             coreBody.push(h(EntriesView, {
               key: 'entries',
@@ -2607,6 +2800,8 @@ window.__ModuleLoader__.load({
       graphScene: buildGraphScene, graphLabel: glLabel, GL_W, GL_H, CAM_MIN, CAM_MAX, GL_LABEL_ZOOM,
       // 记忆内容那几块的小构件：验收脚本直接渲染它们（页面走的也是这几份，不复制）。
       entryRow, entryMetaText, countBar, emptyBox, sameDay,
+      // 「人」这一页：统计行 / 覆盖率灰字 / 一个人一行 / 整页正文，都是纯函数，验收直接渲染。
+      peopleCountLine, peopleCoverageNote, peopleRow, peopleBody, PEOPLE_COVERAGE_FLOOR,
     }
     exports.apply = apply
     return module.exports

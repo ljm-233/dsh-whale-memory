@@ -250,20 +250,20 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
 
   // 1) 键名与 slug 是写死的契约：改了就换一条书签，得让测试叫一声。
   assert.equal(TAB_KEY, 'whale-memory.settings.tab', 'localStorage 的键名')
-  assert.deepEqual(Z.map((z) => z.slug), ['mood', 'memory', 'content', 'wake', 'diag'], '五条页签的 hash 名字，按顺序')
-  assert.deepEqual(Z.map((z) => z.id), ['now', 'intake', 'content', 'wake', 'diag'], '记忆内容排在「记忆怎么收」后面')
+  assert.deepEqual(Z.map((z) => z.slug), ['mood', 'memory', 'content', 'people', 'wake', 'diag'], '六条页签的 hash 名字，按顺序')
+  assert.deepEqual(Z.map((z) => z.id), ['now', 'intake', 'content', 'people', 'wake', 'diag'], '记忆内容排在「记忆怎么收」后面，「人」紧跟其后')
 
-  // 2) 页签条：五个名字按顺序、每个都是 role="tab"。
+  // 2) 页签条：六个名字按顺序、每个都是 role="tab"。
   const barStart = html.indexOf('role="tablist"')
   assert.ok(barStart > 0, '页签条要有 role="tablist"')
   const barHtml = html.slice(barStart, html.indexOf('</div>', barStart))
   assert.deepEqual([
     ...barHtml.matchAll(/role="tab"[^>]*>([^<]+)</g),
-  ].map((m) => m[1]), ['它现在怎么想我', '记忆怎么收', '记忆内容', '怎么被叫醒', '危险与诊断'], '页签条五个名字按顺序')
+  ].map((m) => m[1]), ['它现在怎么想我', '记忆怎么收', '记忆内容', '人', '怎么被叫醒', '危险与诊断'], '页签条六个名字按顺序')
   assert.ok(/id="dsh-whale-memory-tab-mood"[^>]*aria-selected="true"/.test(html), '默认停在第一页（mood 高亮）')
   assert.equal((html.match(/aria-selected="true"/g) ?? []).length, 1, '只有一条页签是高亮的')
   assert.equal((html.match(/tabindex="0"/g) ?? []).length, 1, '只有当前页签进 Tab 序列（其余 tabindex=-1）')
-  assert.equal((html.match(/tabindex="-1"/g) ?? []).length, 4, '其余四条页签 tabindex=-1')
+  assert.equal((html.match(/tabindex="-1"/g) ?? []).length, 5, '其余五条页签 tabindex=-1')
 
   // 3) 四页都渲染，只给非当前页加 hidden——卸载会把没保存的草稿丢掉。
   const panels = {}
@@ -274,9 +274,9 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
     assert.ok(m[0].includes(`aria-labelledby="dsh-whale-memory-tab-${slug}"`), `${slug} 面板指向自己的页签`)
     panels[slug] = { html: html.slice(m.index + m[0].length, html.indexOf('</section>', m.index)), hidden: /\shidden(=""|\s|>)/.test(m[0]) }
   }
-  assert.deepEqual(Object.keys(panels), ['mood', 'memory', 'content', 'wake', 'diag'], '五页都在 DOM 里')
+  assert.deepEqual(Object.keys(panels), ['mood', 'memory', 'content', 'people', 'wake', 'diag'], '六页都在 DOM 里')
   assert.equal(panels.mood.hidden, false, '当前页不 hidden')
-  for (const slug of ['memory', 'content', 'wake', 'diag']) assert.equal(panels[slug].hidden, true, `${slug} 是隐藏而不是没渲染`)
+  for (const slug of ['memory', 'content', 'people', 'wake', 'diag']) assert.equal(panels[slug].hidden, true, `${slug} 是隐藏而不是没渲染`)
 
   // 4) 隐藏页里的控件照样在——切回来时草稿还在。
   assert.ok(panels.memory.html.includes('注入字符上限'), '隐藏的页里控件仍在（只隐藏不卸载）')
@@ -293,7 +293,7 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
 
   // 5) 状态条只在第一页：其余页一个「今日注入」都不许有。
   assert.ok(panels.mood.html.includes('今日注入'), '状态条在第一页顶部')
-  for (const slug of ['memory', 'content', 'wake', 'diag']) {
+  for (const slug of ['memory', 'content', 'people', 'wake', 'diag']) {
     assert.ok(!panels[slug].html.includes('今日注入'), `${slug} 页不重复状态条`)
   }
 
@@ -301,6 +301,7 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
   assert.equal(parseTabHash('#tab=mood'), 'now')
   assert.equal(parseTabHash('#tab=memory'), 'intake')
   assert.equal(parseTabHash('#tab=content'), 'content', '记忆内容页的 hash')
+  assert.equal(parseTabHash('#tab=people'), 'people', '「人」这一页的 hash')
   assert.equal(parseTabHash('#tab=wake'), 'wake')
   assert.equal(parseTabHash('#tab=diag'), 'diag')
   assert.equal(parseTabHash('#tab=intake'), 'intake', '老书签用区 id 也认')
@@ -311,6 +312,7 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
   assert.equal(parseTabHash(undefined), undefined)
   assert.equal(tabOf('content'), 'content', '记忆内容页 slug → 区 id')
   assert.equal(tabOf('mood'), 'now', 'slug → 区 id')
+  assert.equal(tabOf('people'), 'people', '「人」slug → 区 id')
   assert.equal(tabOf('DIAG'), 'diag', '大小写不敏感')
   assert.equal(tabOf(undefined), 'now', '认不出回第一页')
   assert.equal(tabOf('乱写'), 'now', '脏数据回第一页')
@@ -325,8 +327,8 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
     return { core, adv }
   }
   assert.deepEqual(Z.map((z) => countOf(z.id)), [
-    { core: 2, adv: 3 }, { core: 8, adv: 14 }, { core: 0, adv: 0 }, { core: 2, adv: 7 }, { core: 1, adv: 6 },
-  ], '五页的常用/高级项数（记忆内容一页没有配置项）')
+    { core: 2, adv: 3 }, { core: 8, adv: 14 }, { core: 0, adv: 0 }, { core: 0, adv: 0 }, { core: 2, adv: 7 }, { core: 1, adv: 6 },
+  ], '六页的常用/高级项数（记忆内容与「人」两页没有配置项）')
   assert.ok(Z.every((z) => countOf(z.id).core <= 14), '每页常用 ≤14 项')
 }
 

@@ -26,6 +26,7 @@ const steps = [
   ['主插件 三轴打分', ['node', [join(root, 'tests', 'test-axes.mjs')]]],
   ['主插件 大脑三件', ['node', [join(root, 'tests', 'test-brain.mjs')]]],
   ['主插件 说话人', ['node', [join(root, 'tests', 'test-speaker.mjs')]]],
+  ['主插件 人这一维', ['node', [join(root, 'tests', 'test-people.mjs')]]],
   ['新模块 看门狗', ['node', [join(root, 'tests', 'test-new-modules.mjs')]]],
   ['语料 selfcheck', ['node', [join(root, 'corpus', 'test-selfcheck.mjs')]]],
   ['语料 工具', ['node', [join(root, 'corpus', 'test-tool.mjs')]]],

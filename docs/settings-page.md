@@ -1,6 +1,6 @@
 # 设置页结构（分页签）
 
-最后一版：`#tab=` 五条页签，一个区一页。这里只写「结构在哪、改哪儿」——文案口径
+最后一版：`#tab=` 六条页签，一个区一页。这里只写「结构在哪、改哪儿」——文案口径
 （每项说明 ≤25 字、后缀只写「默认 X」/「已改」、单位进名称括号）见 `README.md`。
 
 ## 一、页签 ↔ 区 ↔ 分组
@@ -10,12 +10,14 @@
 | 它现在怎么想我（`#tab=mood`） | `now` | 情绪记账 | 2 / 3 |
 | 记忆怎么收（`#tab=memory`） | `intake` | 注入与空间 · 联想 · 冷热分层 · 入库取舍 · 落盘与周记 · 压缩存档 · 日记 | 8 / 14 |
 | 记忆内容（`#tab=content`） | `content` | 没有设置项：热区 / 冷区 / 场景 / 画像 / 图谱 / 空间（库里到底存了什么） | 0 / 0 |
+| 人（`#tab=people`） | `people` | 没有设置项：认人表 + 每人名下最近 10 条（谁说过话、覆盖率多少） | 0 / 0 |
 | 怎么被叫醒（`#tab=wake`） | `wake` | 什么时候可以说话 · 免打扰 · 夜班 / 桌面页 | 2 / 7 |
 | 危险与诊断（`#tab=diag`） | `diag` | 打分与调试（+ 三个按钮） | 1 / 6 |
 
-- `ZONES`（`client.js` 顶部）= 页签表：`id`（now/intake/content/wake/diag，存 localStorage）、
-  `slug`（mood/memory/content/wake/diag，进 hash）、`title`/`hint`/`long`。`content` 这一页
-  没有 `GROUPS`（零设置项），`renderZone` 单独给它塞一块 `EntriesView`。
+- `ZONES`（`client.js` 顶部）= 页签表：`id`（now/intake/content/people/wake/diag，存 localStorage）、
+  `slug`（mood/memory/content/people/wake/diag，进 hash）、`title`/`hint`/`long`。`content`
+  与 `people` 这两页没有 `GROUPS`（零设置项），`renderZone` 分别给它们塞一块 `EntriesView`
+  / `PeopleView`。
 - `GROUPS[].zone` 决定某组分到哪一页；没有 `zone` 的按 `intake` 算。
 - `tier: 'core' | 'adv'` 决定常用/高级；**页签不搬字段，只分页**（后端字段一个没少）。
 
@@ -50,6 +52,10 @@
   更细的七行（打分公式 / 门槛 / 三轴调试 / 取舍影子 / 向量服务 / 运行位置）仍在诊断页的「高级」里。
 - 记忆内容自己占一条页签（`#tab=content`）：它是「现状」，不是设置，所以不跟第一页挤在一起。
   第一页只留状态条 + 只读预览（记忆卡 / 情绪 / 任务栈），不再挂任何列表。
+- 人那一页（`#tab=people`）顶部还有一行：`N 个人 · 有名字 M · 只有号 K`，以及覆盖率
+  <60% 时的灰字 `覆盖率 X%，很多记忆还不知道是谁说的`。分子只算 `entries.spk <> ''`，
+  空串是「不知道谁说的」，**不算到任何人头上**；`person` 表里没有的 spk 单列成「只有号」，
+  不悄悄丢掉。
 
 ## 五、记忆内容页：信息怎么排
 
