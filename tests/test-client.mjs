@@ -80,6 +80,8 @@ const value = {
   recallMax: 3,
   recallThreshold: 2,
   weightMax: 12,
+  cardDailyMax: 12,
+  cardMinConfidence: 0.35,
   diary: { enabled: true, hour: 22 },
   archive: { enabled: true, notify: true, dir: '', botId: '', targetId: '' },
 }
@@ -143,6 +145,7 @@ const html = renderToStaticMarkup(React.createElement(registration.component))
 for (const text of [
   '记忆注入', '主动联想', '日记', '自动写日记', '压缩存档',
   '注入字符上限', '想起门槛', '顺手私发主人一份',
+  '每天最多真正注入几次', '注入置信门槛',
   '主动消息 · 什么时候可以说话', '主动消息 · 免打扰', '每天最多发几条', '每多少分钟检查一次',
   '记忆内容', '热区', '冷区', '只读',
 ]) {
@@ -181,11 +184,14 @@ console.log('OK 客户端设置页')
 // ---- 写入路径 ----
 // 路径 → 写法的映射是纯函数，直接调，不用模拟点击。
 const { writePath, resetPath, normalizeNumber, GROUPS, writeStateOf } = plugin.__test
-assert.equal(GROUPS.length, 9)
-assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 7, '记忆七组（「记忆空间」单行卡已并进记忆注入）')
+assert.equal(GROUPS.length, 10)
+assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 8, '记忆八组（新增「情绪记账」，仍不含「记忆空间」单行卡）')
 assert.ok(GROUPS[0].fields.some((f) => f.path.join('.') === 'space'), '空间字段落在记忆注入这组')
 assert.equal(GROUPS.filter((g) => g.form === 'proactive').length, 2, '主动消息两组')
-assert.equal(GROUPS.flatMap((g) => g.fields).length, 28, '一共 28 个设置项（新增 groupDump 三项 + weekly 两项）')
+assert.equal(GROUPS.flatMap((g) => g.fields).length, 32, '一共 32 个设置项（新增情绪记账两项）')
+const injection = GROUPS[0].fields.map((f) => f.path.join('.'))
+assert.ok(injection.includes('cardDailyMax'), '记忆注入这组要有「每天最多真注入几次」')
+assert.ok(injection.includes('cardMinConfidence'), '记忆注入这组要有「注入置信门槛」')
 
 writes.length = 0
 writePath(form, ['budgetChars'], 1500)

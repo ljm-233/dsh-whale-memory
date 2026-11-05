@@ -374,5 +374,79 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
   check('低重合也可能 0 条', low.count === 0, String(low.count))
 }
 
+// ---- 13. 三道闸：指纹幂等 / 日上限 / 置信门槛 ----
+{
+  const ASK = '插件重启之后注入点还有问题吗'
+  const readMeta = (d) => {
+    try { return JSON.parse(String(d.prepare("SELECT v FROM meta WHERE k='cardInject'").get()?.v ?? '{}')) } catch { return {} }
+  }
+
+  // 13a. 幂等：同一轮里 card() 被调 6 次，命中只 +1；指纹变了才 +1
+  const gdb = freshDb()
+  gdb.prepare('INSERT INTO entries (u,a,t,w,emo,vec,hot,tier) VALUES (?,?,?,?,?,?,0,0)')
+    .run('插件重启之后注入点还有问题吗，上下文那条路还通不通', '嗯，通了', Date.now() - 3600 * 1000, 1, '[]', null)
+  const gid = Number(gdb.prepare('SELECT last_insert_rowid() AS id').get().id)
+  const hitsOf = () => Number(gdb.prepare('SELECT hits FROM entries WHERE id = ?').get(gid).hits)
+
+  const rec = createRecall(depsOf(gdb))
+  await rec.associate('s-gate', ASK)
+  const first = rec.card({ session: { id: 's-gate' } })
+  check('第一次真注入', first.includes('和这次有关'), first.slice(0, 80))
+  check('第一次命中计数 +1', hitsOf() === 1, String(hitsOf()))
+
+  let same = true
+  for (let i = 0; i < 5; i += 1) {
+    if (rec.card({ session: { id: 's-gate' } }) !== first) same = false
+  }
+  check('同一指纹 6 次调用结果一模一样', same)
+  check('同一指纹 6 次调用只记一次命中', hitsOf() === 1, `hits=${hitsOf()}`)
+  check('幂等不重复记账', readMeta(gdb).count === 1, JSON.stringify(readMeta(gdb).count))
+
+  // 卡片内容变了（多一篇日记）→ 指纹变 → 再记一次
+  gdb.prepare('INSERT INTO diary (day,text,created_at) VALUES (?,?,?)').run('2026-11-05', '今天把三道闸接上了', Date.now())
+  const changed = rec.card({ session: { id: 's-gate' } })
+  check('指纹变了重新生成', changed !== first && changed.includes('今天把三道闸接上了'), changed.slice(0, 80))
+  check('指纹变了才再 +1', hitsOf() === 2, `hits=${hitsOf()}`)
+
+  // 13b. 日上限：设成 2，连跑 5 次不同指纹 → 只有 2 次真注入
+  const capDb = freshDb()
+  capDb.prepare('INSERT INTO entries (u,a,t,w,emo,vec,hot,tier) VALUES (?,?,?,?,?,?,0,0)')
+    .run('插件重启之后注入点还有问题吗，上下文那条路还通不通', '嗯，通了', Date.now(), 1, '[]', null)
+  const capRec = createRecall(depsOf(capDb, { cardDailyMax: () => 2 }))
+  await capRec.associate('s-cap', ASK)
+  const outs = []
+  for (let i = 1; i <= 5; i += 1) {
+    capDb.prepare('INSERT INTO diary (day,text,created_at) VALUES (?,?,?)').run(`2026-11-0${i}`, `第${i}篇`, Date.now())
+    outs.push(capRec.card({ session: { id: 's-cap' } }))
+  }
+  check('前两次照常注入', outs[0].includes('第1篇') && outs[1].includes('第2篇'), outs.slice(0, 2).map((s) => s.slice(0, 40)).join(' | '))
+  check('第三次被日上限拦下（沿用旧卡）', !outs[2].includes('第3篇') && outs[2] === outs[1], outs[2].slice(0, 60))
+  check('四五次同样跳过', !outs[3].includes('第4篇') && !outs[4].includes('第5篇'))
+  const capState = readMeta(capDb)
+  check('meta 里今天只记了 2 次', capState.count === 2, JSON.stringify(capState).slice(0, 120))
+  check('跳过原因写的是 daily-cap', capState.lastSkip?.reason === 'daily-cap' && capState.lastSkip.max === 2, JSON.stringify(capState.lastSkip))
+
+  // 13c. 置信门槛：一条刚过门槛、只有一条、没踩热区的弱命中 → conf < 0.35 → 不注入
+  const lowDb = freshDb()
+  lowDb.prepare('INSERT INTO entries (u,a,t,w,emo,vec,hot,tier) VALUES (?,?,?,?,?,?,0,0)')
+    .run('插件出岔子', '嗯', Date.now(), 1, '[]', null)
+  const lowRec = createRecall(depsOf(lowDb))
+  await lowRec.associate('s-low-conf', ASK)
+  const lowCard = lowRec.card({ session: { id: 's-low-conf' } })
+  const lowState = readMeta(lowDb)
+  check('低置信不注入', !lowCard.includes('和这次有关') && lowCard === '', JSON.stringify(lowCard.slice(0, 80)))
+  check('跳过原因写的是 confidence', lowState.lastSkip?.reason === 'confidence', JSON.stringify(lowState.lastSkip))
+  check('判定依据：conf 低于门槛 0.35',
+    Number(lowState.lastSkip?.conf) < 0.35 && Number(lowState.lastSkip?.conf) > 0 && lowState.lastSkip?.threshold === 0.35,
+    JSON.stringify(lowState.lastSkip))
+  check('门槛没放过就不记次数', (lowState.count ?? 0) === 0, String(lowState.count))
+
+  // 门槛调低到 0.3，同一份输入就放行了——说明卡的正是那个数，不是别的
+  const looseRec = createRecall(depsOf(lowDb, { cardMinConfidence: () => 0.3 }))
+  await looseRec.associate('s-loose', ASK)
+  const looseCard = looseRec.card({ session: { id: 's-loose' } })
+  check('门槛调低就放行', looseCard.includes('和这次有关'), looseCard.slice(0, 80))
+}
+
 console.log(`\n通过 ${pass}，失败 ${fail}`)
 if (fail > 0) process.exit(1)

@@ -1,5 +1,9 @@
 ## 0.28.18（未发布）
 
+- **情绪系统：只做记账（不注入）**：`/tmp/mood-proto` 的纯函数原型整体搬进 `lib/mood.mjs`（`note` / `say` / `applyTurn` 签名与行为不变，零依赖），加存储层 `ensureMoodTable` / `loadState` / `saveState` / `logTurn` / `applyMoodTurn` / `readMood`；新表 `mood_log(id, at, day, space, mood, dims, raw, conf, injected, reason)` + 索引 `(day, space)`，建表挂在既有 `ensure*` 迁移段。当前状态存 meta 键 `mood.state.<space>`（JSON，`INSERT OR REPLACE`）。挂在 `session/event` 的 `turn/end` 上，一轮只写库、**不碰 `systemPrompt.context`、没有 order 950、不改记忆卡**，`injected` 恒为 0；同一 `at` 重复走 `same-turn`，不落第二笔。设置项两项（`moodEnabled` 默认 true、`moodHalfLifeHours` 默认 3 / 1–168，默认值只在 `lib/mood.mjs` 写一份）；新增只读 `GET /dsh-whale-memory/mood?days=7&space=`（每天均值/min/max/条数 + 最近 20 条明细，参数越界截断，空库 `{days:[],recent:[]}`）。测试 `tests/test-mood.mjs` 8 条（原型 5 条 + 开关不写日志 / 同轮幂等 / 接口结构）。`docs/mood-design.md` 顶部补「实现状态（0.28.18）」。
+
+- **记忆卡三道闸（幂等 / 日上限 / 置信门槛）**：`lib/recall.mjs` 交卡前算一个指纹（注入内容 FNV-1a hash + 本次进卡条目 id 集合 + 空间），同一指纹重复组装**原样返回、不再累加 `hits`/`lastHit`**（进程内 Map，上限 16 份、TTL 10 分钟，不落盘、不加依赖）；一轮里 `text()` 被调 5–6 次也只在指纹变化时真记一次命中（改前朴素接入 6 次 → hits 6，改后 → 1）。新增 `cardDailyMax`（默认 12）按本地日期算，从 `meta.cardInject` 记账，`cardMinConfidence`（默认 0.35）用本轮已有的三样信号拼：最高分/门槛两倍、进卡条数/recallMax、热区 overlap ≥ 0.2；两项默认值只在 `constants.mjs` 写一份，设置页「记忆注入」组新增两行（不写 fallback）。被拦下时**沿用上一次的卡**（不是把记忆抹掉），原因写进 `meta.cardInject.lastSkip` 和一行日志，`/status` 新增 `cardInject`（今天注入几次 / 上次为什么跳过 / 上次卡多长）。
+
 - **设置页六个坑 + 两处减法**：①写操作给三态回执（写中…/已保存/失败：<原因>），失败红字就地显示、不再只靠值回弹（`writePath` 不再吞 reject）；②`/entries` 带 `space=`，`Stat('空间')`/空间列表只认配置值（新增 `spaceConfigured`，旧 `space` 字段保留）；③只读态（`writable=false`）在 28 个禁用控件上方写清「要手改 `~/.dsh/profiles/web/cordis.patch.yml` 的 config 段」；④「立刻跑一班」先 confirm 说明「并入 N 条 / 清理冷区老条目」，跑完回显真数（取不到写「清理数未知」）；⑤删场景/改条目/撤回检查 `res.ok`，失败报原因且不刷新；⑥值未到时用 Host 的 `base` 层显示默认值（只显示不回写，不给新控件写死数字）。减法：删掉单行的「记忆空间」卡（空间字段并进「记忆注入」）、每行路径与 `(50~50000)` 收进 `title` 悬停。顺带：主动消息那行改读真实存在的 `state.lastSentAt`，不再永远显示「?」。
 
 - **关系图恢复（可缩放/平移，标签避让）**：设置页图谱 tab 默认改回**力导向图**（原生 SVG，零依赖），

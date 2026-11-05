@@ -22,6 +22,7 @@ const steps = [
   ['主插件 设置页', ['node', [join(root, 'tests', 'test-client.mjs')]]],
   ['主插件 图谱几何', ['node', [join(root, 'tests', 'test-graph-layout.mjs')]]],
   ['主插件 分层配置', ['node', [join(root, 'tests', 'test-layer-config.mjs')]]],
+  ['主插件 情绪记账', ['node', [join(root, 'tests', 'test-mood.mjs')]]],
   ['新模块 看门狗', ['node', [join(root, 'tests', 'test-new-modules.mjs')]]],
   ['语料 selfcheck', ['node', [join(root, 'corpus', 'test-selfcheck.mjs')]]],
   ['语料 工具', ['node', [join(root, 'corpus', 'test-tool.mjs')]]],

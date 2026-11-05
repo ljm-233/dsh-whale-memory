@@ -51,12 +51,14 @@ window.__ModuleLoader__.load({
       {
         form: 'memory',
         title: '记忆注入',
-        hint: '每次对话开头塞多少记忆进上下文。数字越小越省 token。空间也在这一组：换一格，写进去和想起来的都只看那一格。',
+        hint: '每次对话开头塞多少记忆进上下文。数字越小越省 token。空间也在这一组：换一格，写进去和想起来的都只看那一格。最后两项是闸门：一天最多真注入几次、联想没底到什么程度就不刷新这张卡（拦下时沿用上一次的卡，不会把记忆抹掉）。',
         fields: [
           { path: ['budgetChars'], label: '注入字符上限', kind: 'int', min: 50, max: 50000 },
           { path: ['recentPairs'], label: '热区保留轮数', kind: 'int', min: 0, max: 100 },
           { path: ['factMax'], label: '稳定事实条数', kind: 'int', min: 0, max: 500 },
           { path: ['space'], label: '当前空间', kind: 'string' },
+          { path: ['cardDailyMax'], label: '每天最多真正注入几次', kind: 'int', min: 0, max: 500 },
+          { path: ['cardMinConfidence'], label: '注入置信门槛（0~1）', kind: 'num', min: 0, max: 1, step: 0.01 },
         ],
       },
       {
@@ -77,6 +79,15 @@ window.__ModuleLoader__.load({
           { path: ['hotZoneMax'], label: '热区条数上限', kind: 'int', min: 1, max: 200 },
           { path: ['hotPromoteWeight'], label: '抬进热区的最低权重', kind: 'int', min: 0, max: 20 },
           { path: ['tierPenalty'], label: '层级惩罚（每深一层扣分）', kind: 'num', min: 0, max: 1, step: 0.01 },
+        ],
+      },
+      {
+        form: 'memory',
+        title: '情绪记账',
+        hint: '每轮结束记一笔心情，写进库给自己看：不改提示词、不进上下文、不占记忆预算。关掉就整轮跳过。半衰期是「多久落回基线」，调小散得快。',
+        fields: [
+          { path: ['moodEnabled'], label: '记账', kind: 'bool' },
+          { path: ['moodHalfLifeHours'], label: '心情半衰期（小时）', kind: 'int', min: 1, max: 168 },
         ],
       },
       {
