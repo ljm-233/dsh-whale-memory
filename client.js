@@ -1004,24 +1004,48 @@ window.__ModuleLoader__.load({
     )
 
     /**
-     * 一条记忆的第二行：空间 · 来源 · 重要度 · 命中次数 · 层级 · 最后想起 · 在哪一区。
-     *
-     * 一行排完、10px 小字：这些是「查账用的」，不该抢摘要的位置。
-     * imp 是 NULL 表示走自动公式，写「自动」而不是「0」。
+     * 只写「几点」：今天写 HH:MM，跨天才补日期——四段小字里日期不如时间值钱。
      */
-    const entryMetaText = (item) => {
-      const spk = String(item?.spk ?? '')
-      const imp = item?.imp === null || item?.imp === undefined ? '自动' : String(item.imp)
-      const lastHit = Number(item?.lastHit ?? 0)
-      return [
-        String(item?.space ?? 'default'),
-        spk === '' ? '未知' : spk.slice(0, 8),
-        imp,
-        `命中 ${Number(item?.hits ?? 0)} 次`,
-        `tier ${Number(item?.tier ?? 0)}`,
-        lastHit > 0 ? `最后想起 ${fmtTime(lastHit)}` : '还没被想起',
-        item?.hot === true ? '热区' : '冷区',
-      ].join(' · ')
+    const fmtClock = (ms) => {
+      const d = new Date(ms)
+      const p2 = (n) => String(n).padStart(2, '0')
+      const hm = `${p2(d.getHours())}:${p2(d.getMinutes())}`
+      return sameDay(ms) ? hm : `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${hm}`
+    }
+
+    /**
+     * 一条记忆的第二行。
+     *
+     * 收起时只留四段：`空间 · 命中 N 次 · 最后想起 · 热/冷`——扫一眼够判断「分量多少、多久没动过」。
+     * 来源 / 重要度 / tier 是查账用的：有值才写一段，没值不占位。
+     * （真库里 spk 覆盖率 0、imp 全 NULL，写占位词等于白占半行。）
+     * 点开之后（open）补全所有字段：imp 的自动与否、tier 的变动时间、写入时间。
+     */
+    const entryMetaText = (item, opts) => {
+      const open = opts?.open === true
+      const spk = String(item?.spk ?? '').trim()
+      const rawImp = item?.imp === null || item?.imp === undefined ? null : Number(item.imp)
+      const imp = Number.isFinite(rawImp) ? rawImp : null
+      const hits = Math.max(0, Number(item?.hits ?? 0) || 0)
+      const tier = Math.max(0, Number(item?.tier ?? 0) || 0)
+      const lastHit = Number(item?.lastHit ?? 0) || 0
+      const parts = [String(item?.space ?? 'default') || 'default']
+      // 来源：spk 有值才出现；收起给前 8 位，点开给全。
+      if (spk !== '' || open) parts.push(`来源 ${spk === '' ? '没记' : (open ? spk : spk.slice(0, 8))}`)
+      // 重要度：imp 是 NULL 表示走自动公式，不算「有值」；点开时才明说「自动」。
+      if (imp !== null || open) parts.push(`重要度 ${imp === null ? '自动' : Math.round(imp * 100) / 100}`)
+      parts.push(`命中 ${hits} 次`)
+      // tier 0 = 刚进来、还没分层，写出来是噪声。
+      if (tier > 0 || open) parts.push(`tier ${tier}`)
+      parts.push(lastHit > 0 ? `最后想起 ${open ? fmtTime(lastHit) : fmtClock(lastHit)}` : '还没被想起')
+      parts.push(item?.hot === true ? '热区' : '冷区')
+      if (open) {
+        parts.push(`写入 ${fmtTime(Number(item?.at ?? 0))}`)
+        // 库里没有单独的 tier 变动时间列：tier 只在这条被想起、或夜间重分层时变，
+        // 所以能说准的只有「最后一次被想起」——写 ≈，不假装是精确时间。
+        parts.push(`tier 变动 ${lastHit > 0 ? `≈ 最后想起 ${fmtTime(lastHit)}` : '夜间重分层（不记时间）'}`)
+      }
+      return parts.join(' · ')
     }
 
     /** 小圆角方块：只写一个短数字/短词，例如空间条目数。 */
@@ -1059,13 +1083,15 @@ window.__ModuleLoader__.load({
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
         },
       }, `${open ? '▾' : '▸'} ${summary === '' ? '（空）' : summary}`),
-      // 第二行：元信息，一行排完。
+      // 第二行：元信息。收着时只有四段、按一行排完；点开才补全字段，允许折行。
       h('div', {
         style: {
           fontSize: '10px', lineHeight: 1.5, opacity: 0.5,
-          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          ...(open
+            ? { whiteSpace: 'pre-wrap', wordBreak: 'break-word' }
+            : { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }),
         },
-      }, entryMetaText(item)),
+      }, entryMetaText(item, { open })),
       open
         ? h('div', { style: { margin: '3px 0 0', display: 'flex', flexDirection: 'column', gap: '2px' } },
           h('div', { style: { fontSize: '10px', opacity: 0.45 } },

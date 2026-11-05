@@ -340,11 +340,32 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
     hits: 4, tier: 1, lastHit: nowMs, hot: false,
   }
   const meta = entryMetaText(item)
-  for (const part of ['default', 'abcdef12', '自动', '命中 4 次', 'tier 1', '最后想起', '冷区']) {
+  for (const part of ['default', 'abcdef12', '命中 4 次', 'tier 1', '最后想起', '冷区']) {
     assert.ok(meta.includes(part), `元信息要有「${part}」：${meta}`)
   }
   assert.ok(!meta.includes('abcdef123'), 'spk 只取前 8 位')
   assert.ok(!meta.includes('\n'), '元信息一行排完')
+  assert.ok(!meta.includes('重要度'), 'imp 为 NULL 时收起态不写「重要度」（不占位）')
+  assert.ok(!meta.includes('未知'), '没来源时不再写「未知」占位')
+
+  // 真库里 spk 全空、imp 全 NULL、tier 0：收起时正好四段。
+  const bare = entryMetaText({ ...item, spk: '', imp: null, tier: 0, hits: 0, lastHit: 0, hot: false })
+  assert.equal(bare, 'default · 命中 0 次 · 还没被想起 · 冷区', `四段：${bare}`)
+
+  // 三个可选字段都有值时的收起态：来源 8 位 + 重要度 + tier 都出现。
+  const rich = entryMetaText({ ...item, spk: '8F0AA398xxxx', imp: 0.87, tier: 2 })
+  for (const part of ['来源 8F0AA398', '重要度 0.87', 'tier 2', '命中 4 次', '最后想起']) {
+    assert.ok(rich.includes(part), `有值才显示「${part}」：${rich}`)
+  }
+  assert.ok(!rich.includes('8F0AA398x'), '收起态来源只给前 8 位')
+
+  // 点开：补全字段（来源全量、重要度自动/数值、写入与 tier 变动时间）。
+  const opened = entryMetaText({ ...item, spk: '', imp: null }, { open: true })
+  for (const part of ['来源 没记', '重要度 自动', 'tier 1', '写入', 'tier 变动']) {
+    assert.ok(opened.includes(part), `展开态要补「${part}」：${opened}`)
+  }
+  assert.ok(entryMetaText({ ...item, spk: '8F0AA398xxxx', imp: 0.87, tier: 2 }, { open: true }).includes('来源 8F0AA398xxxx'),
+    '展开态来源给全 12 位')
 
   // 收起：正好两行（摘要 / 元信息），全文不出现。
   const closed = renderToStaticMarkup(entryRow(item, { open: false }))
@@ -361,10 +382,13 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
   assert.ok(openText.includes('这一句是摘要'), '展开后摘要还在')
   assert.ok(openText.includes('嗯，我在。'), '展开后能看到助手那句')
   assert.ok(openText.includes('改') && openText.includes('撤回'), '展开后才有改/撤回')
+  assert.ok(openText.includes('重要度 自动') && openText.includes('tier 变动'), '展开后第二行补全字段')
+  assert.ok(open.includes('pre-wrap'), '展开的第二行允许折行')
 
-  // imp 有值就写数值，NULL 写「自动」。
-  assert.ok(entryMetaText({ ...item, imp: 6 }).includes(' · 6 · '), 'imp 有值写数值')
-  assert.ok(entryMetaText({ ...item, imp: null }).includes('自动'), 'imp 为 NULL 写「自动」')
+  // imp 有值写数值；NULL 只在展开态说「自动」。
+  assert.ok(entryMetaText({ ...item, imp: 6 }).includes('重要度 6'), 'imp 有值写数值')
+  assert.ok(!entryMetaText({ ...item, imp: null }).includes('自动'), '收起态 imp 为 NULL 不写')
+  assert.ok(entryMetaText({ ...item, imp: null }, { open: true }).includes('自动'), '展开态 imp 为 NULL 写「自动」')
   // 没命中过 / 热区 也说得出来。
   const cold = entryMetaText({ ...item, lastHit: 0, hot: true, hits: 0 })
   assert.ok(cold.includes('还没被想起') && cold.includes('热区'), '没命中过与热区都要写出来')

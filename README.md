@@ -98,7 +98,7 @@ node scripts/check-all.mjs
 其中 **图谱** 是「谁和谁总一起出现」的共现统计：`GET /graph?space=&limit=&sort=` 给实体（`name/count/lastHit/degree`）与边（`a/b/weight`），
 `GET /graph/entity?name=&space=&limit=` 点进去看这个实体最近几条记忆（查不到 404）。
 
-这一页的排法（每条记忆两行：摘要 / `空间 · 来源 · imp · 命中 · tier · 最后想起 · 在哪一区`；
+这一页的排法（每条记忆两行：摘要 / `空间 · 命中 · 最后想起 · 在哪一区`，`来源 / 重要度 / tier` 有值才占位、点开才补全；
 热冷两段纯 CSS 占比条；空间下拉带条目数；场景标「今天触发过没有」；画像列事实原文；
 图上方一行 `实体 N · 边 M · 本次画 K 条边`；每块都有「还没有 + 为什么」的空状态）见
 [`docs/settings-page.md`](docs/settings-page.md) 第五节。`/entries` 为此多回了
