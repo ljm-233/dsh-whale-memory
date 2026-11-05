@@ -448,6 +448,9 @@ if (tools.size === 0) {
   assert.equal(first.status, 200)
   assert.equal(first.body.ok, true, `夜班应该跑得完：${JSON.stringify(first.body)}`)
   assert.ok(existsSync(join(dir, '记忆本', '桌面页.md')), '桌面页要落盘')
+  // 设置页要回显「并入 X / 清理 Y」，两个数都得是真数（0 也是数，不能缺字段）。
+  assert.equal(typeof first.body.settle.pruned, 'number', '夜班要报清理条数')
+  assert.equal(typeof first.body.merged, 'number', '夜班要报并入条数')
   assert.match(readFileSync(join(dir, '日志', `${first.body.day}.md`), 'utf8'), /L1=\d+ L2=\d+/u, '日志末尾要有四数')
 
   const self2 = await call('/dsh-whale-memory/selfcheck')
@@ -456,6 +459,28 @@ if (tools.size === 0) {
   assert.equal((await call('/dsh-whale-memory/nightly', 'GET')).status, 405)
   assert.equal((await call('/dsh-whale-memory/selfcheck', 'POST')).status, 405)
   console.log('OK 自证与夜班')
+}
+
+// ---- 空间：/entries 带 space 才真的换内容；status 报配置里的 space ----
+{
+  const seed = new DatabaseSync(join(dir, 'memory.db'))
+  seed.prepare('INSERT INTO entries(u,a,t,w,emo,hot,space) VALUES(?,?,?,?,?,?,?)')
+    .run('另一个空间里的一条', '嗯', Date.now(), 1, '[]', 1, 'work')
+  seed.close()
+
+  // 用热区：夜班刚跑完，热区里才有条目。
+  const plain = await call('/dsh-whale-memory/entries', 'GET', '?zone=hot')
+  const work = await call('/dsh-whale-memory/entries', 'GET', '?zone=hot&space=work')
+  console.log(`不带 space：total=${plain.body.total} 条；带 space=work：total=${work.body.total} 条`)
+  assert.ok(plain.body.total > work.body.total, '不带 space 应读到 default，条数该更多')
+  assert.equal(work.body.total, 1, '带 space 只读那一格')
+  assert.equal(work.body.items[0].user, '另一个空间里的一条')
+  assert.equal((await call('/dsh-whale-memory/entries', 'GET', '?zone=hot&space=')).body.total, plain.body.total + 1, 'space 留空 = 全部空间')
+
+  const st = await call('/dsh-whale-memory/status')
+  assert.equal(st.body.spaceConfigured, 'default', '空间要报配置值，不是最后一条记忆的 space')
+  assert.ok('space' in st.body, '旧字段要留着，别破接口')
+  console.log('OK 空间隔离')
 }
 
 console.log('\n全部通过')

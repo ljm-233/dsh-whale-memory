@@ -150,9 +150,25 @@ for (const text of [
 }
 assert.ok(html.includes('可以单条删掉'), '场景那一块要说明「单条能删、原文不丢」')
 assert.ok(html.includes('value="1000"'), '应该渲染出当前值 1000')
-assert.ok(html.includes('budgetChars · 已改'), '用户改过的项要标出来')
-assert.ok(html.includes('archive.notify · 已改'), '嵌套字段的覆盖标记也要认')
+// 覆盖标记还在行内，但路径与范围已经收进 title（悬停可见），不再常驻。
+assert.ok(/已改/.test(html), '用户改过的项要标出来')
+assert.ok(!html.includes('budgetChars · 已改'), '路径不再常驻行内')
+assert.ok(html.includes('title="budgetChars (50~50000)"'), '路径与取值范围放进 title')
+// 可见文本（去掉标签）里不该再有路径和范围；它们只在 title 属性里。
+const visibleText = (markup) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
+assert.ok(!visibleText(html).includes('50~50000'), '范围字不该出现在可见文本里')
+assert.ok(!visibleText(html).includes('budgetChars'), '路径不该常驻行内')
+assert.ok(html.includes('title="archive.notify"'), '嵌套字段也有 title')
 assert.ok(!html.includes('archive.enabled · 已改'), '没改过的项不能误标')
+assert.ok(!html.includes('记忆空间'), '「记忆空间」那张单行卡已并进「记忆注入」')
+assert.ok(html.includes('已保存'), '要写清保存回执长什么样')
+assert.ok(html.includes('当前空间'), '空间字段并进记忆注入后仍然在')
+
+// ---- 只读态要说清为什么、怎么改 ----
+{
+  const ro = renderToStaticMarkup(React.createElement(registration.component))
+  assert.ok(ro.length > 0)
+}
 // ---- 记忆内容是只读的 ----
 {
   // 所有可写控件都来自 settingRow（有 onWrite）；记忆内容那一块只发 GET 请求。
@@ -164,9 +180,10 @@ console.log('OK 客户端设置页')
 
 // ---- 写入路径 ----
 // 路径 → 写法的映射是纯函数，直接调，不用模拟点击。
-const { writePath, resetPath, normalizeNumber, GROUPS } = plugin.__test
-assert.equal(GROUPS.length, 10)
-assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 8, '记忆八组（含冷热分层、记忆空间、夜班、自动落盘/周记）')
+const { writePath, resetPath, normalizeNumber, GROUPS, writeStateOf } = plugin.__test
+assert.equal(GROUPS.length, 9)
+assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 7, '记忆七组（「记忆空间」单行卡已并进记忆注入）')
+assert.ok(GROUPS[0].fields.some((f) => f.path.join('.') === 'space'), '空间字段落在记忆注入这组')
 assert.equal(GROUPS.filter((g) => g.form === 'proactive').length, 2, '主动消息两组')
 assert.equal(GROUPS.flatMap((g) => g.fields).length, 28, '一共 28 个设置项（新增 groupDump 三项 + weekly 两项）')
 
@@ -201,6 +218,38 @@ console.log('OK 服务缺席时安全退出')
   assert.deepEqual(normalizeNumber(cap, 'abc', 2), { write: false }, '乱输入不写')
   assert.deepEqual(normalizeNumber(cap, '2', 2), { write: false, clamped: false }, '没变就不写')
   console.log('OK normalizeNumber')
+}
+
+// ---- 写操作三态：写中 → 已保存 / 失败：<原因> ----
+{
+  const accepts = (ok) => ({
+    set: () => Promise.resolve(ok),
+    unset: () => Promise.resolve(ok),
+    mutate: () => Promise.resolve(ok),
+  })
+
+  const seen = []
+  assert.equal(await writePath(accepts(true), ['budgetChars'], 9, (s) => seen.push(s.status)), true)
+  assert.deepEqual(seen, ['saving', 'saved'], '成功要回报写中…和已保存')
+  assert.equal(writeStateOf({ status: 'saving' }), '写中…')
+  assert.equal(writeStateOf({ status: 'saved' }), '已保存')
+
+  seen.length = 0
+  assert.equal(await writePath(accepts(false), ['budgetChars'], 9, (s) => seen.push(s)), false, 'Host 拒绝不能算成功')
+  assert.equal(seen[1].status, 'error', '拒绝要报失败')
+  assert.ok(seen[1].message.length > 0, '失败必须带原因')
+  assert.ok(writeStateOf(seen[1]).startsWith('失败：'), '红字文案是「失败：原因」')
+
+  seen.length = 0
+  const broken = { set: () => Promise.reject(new Error('网络断了')), unset: () => Promise.reject(new Error('网络断了')), mutate: () => Promise.reject(new Error('网络断了')) }
+  assert.equal(await writePath(broken, ['budgetChars'], 9, (s) => seen.push(s)), false, 'reject 也不抛给页面')
+  assert.equal(seen[1].status, 'error')
+  assert.match(seen[1].message, /网络断了/u, 'reject 的原因要原样传出来')
+
+  seen.length = 0
+  assert.equal(await resetPath(broken, ['budgetChars'], (s) => seen.push(s)), false)
+  assert.equal(seen[1].status, 'error', '恢复失败也要报')
+  console.log('OK 写操作三态')
 }
 
 console.log('\n全部通过')

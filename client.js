@@ -51,11 +51,12 @@ window.__ModuleLoader__.load({
       {
         form: 'memory',
         title: '记忆注入',
-        hint: '每次对话开头塞多少记忆进上下文。数字越小越省 token。',
+        hint: '每次对话开头塞多少记忆进上下文。数字越小越省 token。空间也在这一组：换一格，写进去和想起来的都只看那一格。',
         fields: [
           { path: ['budgetChars'], label: '注入字符上限', kind: 'int', min: 50, max: 50000 },
           { path: ['recentPairs'], label: '热区保留轮数', kind: 'int', min: 0, max: 100 },
           { path: ['factMax'], label: '稳定事实条数', kind: 'int', min: 0, max: 500 },
+          { path: ['space'], label: '当前空间', kind: 'string' },
         ],
       },
       {
@@ -76,14 +77,6 @@ window.__ModuleLoader__.load({
           { path: ['hotZoneMax'], label: '热区条数上限', kind: 'int', min: 1, max: 200 },
           { path: ['hotPromoteWeight'], label: '抬进热区的最低权重', kind: 'int', min: 0, max: 20 },
           { path: ['tierPenalty'], label: '层级惩罚（每深一层扣分）', kind: 'num', min: 0, max: 1, step: 0.01 },
-        ],
-      },
-      {
-        form: 'memory',
-        title: '记忆空间',
-        hint: '同一份库按空间隔离：换一个空间，写进去和想起来的都只看那一格。',
-        fields: [
-          { path: ['space'], label: '当前空间', kind: 'string' },
         ],
       },
       {
@@ -183,20 +176,78 @@ window.__ModuleLoader__.load({
       return { write: true, value, clamped: value !== n }
     }
 
-    /** 写入一个字段：一级字段走 set，嵌套字段走 mutate + 路径。 */
-    const writePath = (form, path, value) => {
+    /**
+     * 写操作的三态文案：写中 → 已保存 / 失败：<原因>。
+     *
+     * 以前这里 `catch(() => undefined)` 就把 reject 吞了，页面只靠「值回弹」
+     * 暗示没写进去——用户分不清是网络断了、配置只读，还是 Host 校验拒了。
+     * 现在错误原样交回调用方，由行尾红字说清原因。
+     */
+    const WRITE_TEXT = {
+      saving: () => '写中…',
+      saved: () => '已保存',
+      error: (state) => `失败：${state?.message ?? '未知原因'}`,
+    }
+
+    /** 写状态 → 给人看的一行字；没有状态就是空串（不占位）。 */
+    const writeStateOf = (state) => {
+      if (state === undefined || state === null) return ''
+      const text = WRITE_TEXT[state.status]
+      return typeof text === 'function' ? text(state) : ''
+    }
+
+    /**
+     * 写入一个字段：一级字段走 set，嵌套字段走 mutate + 路径。
+     *
+     * @param {object} form 配置表单
+     * @param {string[]} path 字段路径
+     * @param {unknown} value 新值
+     * @param {Function} [onState] 状态回调：{status:'saving'|'saved'|'error', message?}
+     * @returns {Promise<boolean>} 是否真的写进去了（拒绝也算 false，不抛）
+     */
+    const writePath = (form, path, value, onState) => {
+      const notify = typeof onState === 'function' ? onState : () => {}
+      notify({ status: 'saving' })
       const done = path.length === 1
         ? form.set(path[0], value)
         : form.mutate([{ op: 'set', path, value }])
-      done.catch(() => undefined)
+      return Promise.resolve(done).then(
+        (ok) => {
+          if (ok === false) {
+            notify({ status: 'error', message: '配置服务拒了这次写入（只读，或值没通过校验）' })
+            return false
+          }
+          notify({ status: 'saved' })
+          return true
+        },
+        (error) => {
+          notify({ status: 'error', message: String(error?.message ?? error ?? '请求没发出去') })
+          return false
+        },
+      )
     }
 
     /** 清掉用户覆盖，让字段回到 schema 默认值。 */
-    const resetPath = (form, path) => {
+    const resetPath = (form, path, onState) => {
+      const notify = typeof onState === 'function' ? onState : () => {}
+      notify({ status: 'saving' })
       const done = path.length === 1
         ? form.unset(path[0])
         : form.mutate([{ op: 'unset', path }])
-      done.catch(() => undefined)
+      return Promise.resolve(done).then(
+        (ok) => {
+          if (ok === false) {
+            notify({ status: 'error', message: '配置服务拒了这次恢复（只读，或值没通过校验）' })
+            return false
+          }
+          notify({ status: 'saved' })
+          return true
+        },
+        (error) => {
+          notify({ status: 'error', message: String(error?.message ?? error ?? '请求没发出去') })
+          return false
+        },
+      )
     }
 
   // ───────────────────────── 图谱几何（纯函数，无 DOM、无随机） ─────────────────────────
@@ -667,24 +718,34 @@ window.__ModuleLoader__.load({
       const metaStyle = { fontSize: '11px', opacity: 0.6, fontFamily: 'monospace' }
 
 
-      /** 一行设置：标签 + 控件 + 覆盖标记。 */
-      const Row = ({ field, value, overridden, disabled, onWrite, onReset }) => {
+      /**
+       * 一行设置：标签 + 控件 + 覆盖标记 + 写操作反馈。
+       *
+       * 路径与取值范围只放在整行的 title 里（悬停可见），行内不再常驻——
+       * 28 行每行都挂一段 monospace 噪音，值反而看不见。
+       */
+      const Row = ({ field, value, base, overridden, disabled, save, onWrite, onReset }) => {
+        // 值还没下发时用 Host 的 base 层（schema 默认）兜住：只显示、不回写，
+        // 也不在客户端写死数字（groupDump/weekly 的默认值只有 LAYER_DEFAULTS 一份）。
+        const fallback = pick(base, field.path) ?? field.fallback
+        const shown = value === undefined || value === null ? fallback : value
+        const usingDefault = (value === undefined || value === null) && shown !== undefined && shown !== null
         // 输入框自己存草稿：敲字时只改草稿，失焦或回车才写进去。
         // 否则每敲一个数字就提交一次，Host 一回写就把光标和内容顶回去。
         const asText = (v) => (v === undefined || v === null ? '' : String(v))
-        const [draft, setDraft] = React.useState(asText(value))
+        const [draft, setDraft] = React.useState(asText(shown))
         const [typing, setTyping] = React.useState(false)
 
         React.useEffect(() => {
-          if (!typing) setDraft(asText(value))
-        }, [value, typing])
+          if (!typing) setDraft(asText(shown))
+        }, [shown, typing])
 
         const commit = () => {
           setTyping(false)
-          const result = normalizeNumber(field, draft, value)
+          const result = normalizeNumber(field, draft, shown)
           if (result.clamped === true) setDraft(asText(result.value))
           if (result.write === true) onWrite(result.value)
-          else if (draft.trim() === '' || !Number.isFinite(Number(draft))) setDraft(asText(value))
+          else if (draft.trim() === '' || !Number.isFinite(Number(draft))) setDraft(asText(shown))
         }
 
         const control = (() => {
@@ -692,7 +753,7 @@ window.__ModuleLoader__.load({
             const commitText = () => {
               setTyping(false)
               const next = String(draft).trim()
-              if (next !== String(value ?? '')) onWrite(next)
+              if (next !== String(shown ?? '')) onWrite(next)
             }
             return h('input', {
               type: 'text',
@@ -707,7 +768,7 @@ window.__ModuleLoader__.load({
             })
           }
           if (field.kind === 'bool') {
-            const checked = value === true
+            const checked = shown === true
             if (typeof Switch === 'function') {
               return h(Switch, { checked, label: field.label, disabled, onChange: (next) => onWrite(next) })
             }
@@ -733,10 +794,13 @@ window.__ModuleLoader__.load({
         const range = field.min !== undefined || field.max !== undefined
           ? `${field.min ?? ''}~${field.max ?? ''}`
           : ''
+        const hover = `${PATH_TEXT(field.path)}${range === '' ? '' : ` (${range})`}`
+        const saveText = writeStateOf(save)
+        const saveFailed = save !== undefined && save !== null && save.status === 'error'
 
         return h(
           'div',
-          { style: rowStyle },
+          { style: rowStyle, title: hover },
           h(
             'div',
             { style: labelStyle },
@@ -744,8 +808,8 @@ window.__ModuleLoader__.load({
             h(
               'span',
               { style: metaStyle },
-              overridden ? `${PATH_TEXT(field.path)} · 已改` : PATH_TEXT(field.path),
-              range === '' ? '' : `  (${range})`,
+              usingDefault ? '默认值' : '',
+              overridden ? (usingDefault ? ' · 已改' : '已改') : '',
             ),
           ),
           h(
@@ -767,6 +831,17 @@ window.__ModuleLoader__.load({
               )
               : null,
             control,
+            // 写操作的回执：写中… / 已保存 / 失败：<原因>。失败是红字，就地留着。
+            h('span', {
+              role: 'status',
+              title: saveFailed ? String(save.message ?? '') : '',
+              style: {
+                fontSize: '11px',
+                minWidth: '64px',
+                color: saveFailed ? '#ff8f8f' : 'inherit',
+                opacity: saveFailed ? 1 : 0.55,
+              },
+            }, saveText),
           ),
         )
       }
@@ -786,7 +861,7 @@ window.__ModuleLoader__.load({
        * 纯只读：这里只有文字和一个切换按钮，没有任何写入口——
        * 记忆内容该怎么变是插件自己决定的，不该由设置页手动改。
        */
-      const EntriesView = ({ onSwitchSpace, currentSpace }) => {
+      const EntriesView = ({ onSwitchSpace, currentSpace, spaceSave }) => {
         const [zone, setZone] = React.useState('cold')
         const [data, setData] = React.useState(null)
         const [dataZone, setDataZone] = React.useState('')
@@ -806,6 +881,10 @@ window.__ModuleLoader__.load({
         const [graphEdges, setGraphEdges] = React.useState(GL_EDGE_DEFAULT)
         const [cam, setCam] = React.useState({ k: 1, x: 0, y: 0 })
         const [hover, setHover] = React.useState(null)
+        // 删/改/撤回这类动作失败时，就地把原因摊在列表上方——别刷新一下装作什么都没发生。
+        const [actErr, setActErr] = React.useState('')
+        // 切空间是一次写操作，同样要回执（写中…/已保存/失败）。
+        const [spaceBusy, setSpaceBusy] = React.useState(false)
         const svgRef = React.useRef(null)
         const panRef = React.useRef(null)
 
@@ -818,7 +897,41 @@ window.__ModuleLoader__.load({
           if (z === 'persona') return '/dsh-whale-memory/persona'
           if (z === 'graph') return `/dsh-whale-memory/graph?space=${encodeURIComponent(spaceNow())}&limit=50&sort=${graphSort}`
           if (z === 'spaces') return '/dsh-whale-memory/spaces'
-          return `/dsh-whale-memory/entries?zone=${z}&limit=50${extra}`
+          // 热区/冷区必须带上当前空间：不带的话后端按 'default' 读，
+          // 切了空间看到的还是同一批，等于骗人。「全部空间」时留空表示不过滤。
+          return `/dsh-whale-memory/entries?zone=${z}&space=${encodeURIComponent(allSpaces ? '' : spaceNow())}&limit=50${extra}`
+        }
+
+        /**
+         * 发一个改记忆内容的请求。
+         *
+         * 只看 `res.ok`：后端拒绝（404/409/500）时也要把原因说出来，
+         * 并且**不刷新**——刷新会让人以为改动生效了，实际什么都没有变。
+         *
+         * @returns {Promise<boolean>} 成功返回 true
+         */
+        const postJson = async (url, body) => {
+          setActErr('')
+          try {
+            const res = await fetch(url, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(body),
+            })
+            if (res.ok) return true
+            let detail = ''
+            try {
+              const json = await res.json()
+              detail = String(json?.reason ?? json?.error ?? '')
+            } catch {
+              try { detail = String(await res.text()).slice(0, 200) } catch { detail = '' }
+            }
+            setActErr(`操作失败：HTTP ${res.status}${detail === '' ? '' : ` · ${detail}`}`)
+            return false
+          } catch (error) {
+            setActErr(`操作失败：${String(error?.message ?? error ?? '请求没发出去')}`)
+            return false
+          }
         }
 
         // 图谱的空间下拉读现成的 /spaces 列表：开一次就够，不跟着页签反复拉。
@@ -843,7 +956,7 @@ window.__ModuleLoader__.load({
             .then((json) => { if (alive) { setData(json); setDataZone(zone) } })
             .catch(() => { if (alive) { setData(null); setFailed(true) } })
           return () => { alive = false }
-        }, [zone, seq, allSpaces, graphSpace, graphSort])
+        }, [zone, seq, allSpaces, graphSpace, graphSort, currentSpace])
 
         const tab = (key, label) => h('button', {
           type: 'button',
@@ -1220,9 +1333,16 @@ window.__ModuleLoader__.load({
           if (zone === 'spaces') {
             const list = Array.isArray(data.spaces) ? data.spaces : []
             if (list.length === 0) return h('p', { style: { fontSize: '12px', opacity: 0.55 } }, '还没有空间记录。')
+            const spaceFailed = spaceSave !== undefined && spaceSave !== null && spaceSave.status === 'error'
             return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
               h('p', { style: { fontSize: '11px', opacity: 0.55, margin: 0 } },
                 `当前空间：${currentSpace || 'default'}。换一个空间后，写进去和想起来的都只看那一格。`),
+              spaceSave === undefined || spaceSave === null
+                ? null
+                : h('p', {
+                  role: 'status',
+                  style: { fontSize: '11px', margin: 0, color: spaceFailed ? '#ff8f8f' : 'inherit', opacity: spaceFailed ? 1 : 0.55 },
+                }, spaceFailed ? `切换失败：${spaceSave.message ?? '未知原因'}` : writeStateOf(spaceSave)),
               ...list.map((sp) => h('div', {
                 key: sp.id,
                 style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '4px 0', borderBottom: '1px solid rgba(128,128,128,0.15)' },
@@ -1230,8 +1350,12 @@ window.__ModuleLoader__.load({
                 h('span', { style: { fontSize: '12px' } }, `${sp.id === (currentSpace || 'default') ? '● ' : ''}${sp.id} · ${sp.count} 条`),
                 h('button', {
                   type: 'button',
-                  disabled: typeof onSwitchSpace !== 'function' || sp.id === (currentSpace || 'default'),
-                  onClick: () => { if (typeof onSwitchSpace === 'function') onSwitchSpace(sp.id) },
+                  disabled: typeof onSwitchSpace !== 'function' || sp.id === (currentSpace || 'default') || spaceBusy,
+                  onClick: async () => {
+                    if (typeof onSwitchSpace !== 'function' || spaceBusy) return
+                    setSpaceBusy(true)
+                    try { await onSwitchSpace(sp.id) } finally { setSpaceBusy(false) }
+                  },
                   style: { border: '1px solid currentColor', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', background: 'transparent', color: 'inherit', cursor: 'pointer', opacity: sp.id === (currentSpace || 'default') ? 0.4 : 0.9 },
                 }, '切到这个空间'),
               )),
@@ -1256,12 +1380,8 @@ window.__ModuleLoader__.load({
                     title: '删掉这一段（原文还在记忆里）',
                     onClick: async () => {
                       if (!window.confirm(`删掉场景「${item.topic}」？原文不会丢，只是这一段不再被当作一段经历取用。`)) return
-                      await fetch('/dsh-whale-memory/scenes/delete', {
-                        method: 'POST',
-                        headers: { 'content-type': 'application/json' },
-                        body: JSON.stringify({ topic: item.topic, space: item.space ?? 'default' }),
-                      })
-                      setSeq((n) => n + 1)
+                      const ok = await postJson('/dsh-whale-memory/scenes/delete', { topic: item.topic, space: item.space ?? 'default' })
+                      if (ok) setSeq((n) => n + 1)
                     },
                     style: { border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '11px', opacity: 0.55, padding: 0, color: 'inherit', flexShrink: 0 },
                   }, '删'),
@@ -1288,12 +1408,8 @@ window.__ModuleLoader__.load({
                   onClick: async () => {
                     const next = window.prompt('改成什么？（只改用户侧那条）', item.user)
                     if (next === null || next.trim() === '') return
-                    await fetch('/dsh-whale-memory/entries/correct', {
-                      method: 'POST',
-                      headers: { 'content-type': 'application/json' },
-                      body: JSON.stringify({ id: item.id, text: next }),
-                    })
-                    setSeq((n) => n + 1)
+                    const ok = await postJson('/dsh-whale-memory/entries/correct', { id: item.id, text: next })
+                    if (ok) setSeq((n) => n + 1)
                   },
                   style: { border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '11px', opacity: 0.55, padding: 0, color: 'inherit' },
                 }, '改'),
@@ -1301,12 +1417,8 @@ window.__ModuleLoader__.load({
                   type: 'button',
                   onClick: async () => {
                     if (!window.confirm('撤回这条记忆？原件会留在 revisions 里。')) return
-                    await fetch('/dsh-whale-memory/entries/retract', {
-                      method: 'POST',
-                      headers: { 'content-type': 'application/json' },
-                      body: JSON.stringify({ id: item.id }),
-                    })
-                    setSeq((n) => n + 1)
+                    const ok = await postJson('/dsh-whale-memory/entries/retract', { id: item.id })
+                    if (ok) setSeq((n) => n + 1)
                   },
                   style: { border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '11px', opacity: 0.55, padding: 0, color: 'inherit' },
                 }, '撤回'),
@@ -1323,6 +1435,9 @@ window.__ModuleLoader__.load({
             { style: { fontSize: '11px', opacity: 0.6, margin: '0 0 4px' } },
             '只读，只是看一眼存了什么。热区是最近还在上下文里的，冷区是压下去、被想起时才取用的；场景是同一条线索串起来的一段（可以单条删掉，原文不丢），画像则是从记忆里蒸出来的「我记得的你」。',
           ),
+          actErr === ''
+            ? null
+            : h('p', { style: { fontSize: '11px', color: '#ff8f8f', margin: '0 0 4px', lineHeight: 1.5 } }, actErr),
           h(
             'div',
             { style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', flexWrap: 'wrap' } },
@@ -1449,6 +1564,9 @@ window.__ModuleLoader__.load({
         const [nightBusy, setNightBusy] = React.useState(false)
         const [nightNote, setNightNote] = React.useState('')
         const [tick, setTick] = React.useState(0)
+        // 每个字段的写回执：key = 字段路径。写中…/已保存/失败：原因，就地显示。
+        const [save, setSave] = React.useState({})
+        const saveStateFor = (key) => (state) => setSave((prev) => ({ ...prev, [key]: state }))
 
         React.useEffect(() => {
           let alive = true
@@ -1486,7 +1604,7 @@ window.__ModuleLoader__.load({
           Stat('冷区', `${memoryStatus.cold ?? '?'} 条`),
           Stat('事实', `${memoryStatus.facts ?? '?'} 条`),
           Stat('场景', `${memoryStatus.scenes ?? 0} 段`),
-          Stat('空间', `${memoryStatus.spaces ?? 0} 个`, String(memoryStatus.space ?? '')),
+          Stat('空间', `${memoryStatus.spaces ?? 0} 个`, String(memoryStatus.spaceConfigured ?? 'default')),
           Stat('向量', memoryStatus.embedOk ? '正常' : '降级'),
           Stat('想起', `${memoryStatus.stats?.recalled ?? 0} 次`),
           Stat('蒸馏', `${memoryStatus.stats?.distillCalls ?? 0} 次`),
@@ -1502,7 +1620,10 @@ window.__ModuleLoader__.load({
           footNotes.push(`近 7 天：${trend.series.map((d) => `${d.day.slice(5)} 蒸馏 ${d.distillCalls ?? 0} / 想起 ${d.recalled ?? 0}`).join('　')}`)
         }
         if (proactiveStatus !== null) {
-          footNotes.push(`主动消息：${proactiveStatus.isQuietHours ? '免打扰中' : '可发'} · 今天 ${proactiveStatus.state?.dailyCount?.[localDayKey()] ?? 0} 条 · ${proactiveStatus.decision?.reason ?? '?'}`)
+          // lastSentAt 是状态里真实存在的字段；以前读 decision.reason，那里根本没有，
+          // 于是永远显示一个「?」——宁可说「还没跑过」，也不摆个问号糊弄。
+          const lastSentAt = proactiveStatus.state?.lastSentAt
+          footNotes.push(`主动消息：${proactiveStatus.isQuietHours ? '免打扰中' : '可发'} · 今天 ${proactiveStatus.state?.dailyCount?.[localDayKey()] ?? 0} 条 · ${lastSentAt ? `上次开口 ${fmtTime(Number(lastSentAt))}` : '还没跑过'}`)
         }
 
         return h(
@@ -1539,17 +1660,33 @@ window.__ModuleLoader__.load({
               disabled: nightBusy,
               onClick: () => {
                 if (nightBusy) return
+                // 手动跑一班是会动真数据的：先说清它要做哪两件事，再问要不要。
+                const pending = Number.isFinite(Number(selfCheck?.mergedTonight)) ? Number(selfCheck.mergedTonight) : null
+                const ask = [
+                  '手动跑一班夜班？它现在会做两件事：',
+                  `1) 把今天新攒的记忆并入日档（现在 ${pending === null ? '数未知' : `${pending} 条`}）；`,
+                  '2) 清理冷区里太老、权重又低的条目。',
+                  '',
+                  '要现在跑吗？',
+                ].join('\n')
+                if (!window.confirm(ask)) return
                 setNightBusy(true)
                 setNightNote('')
                 fetch(NIGHTLY_URL, { method: 'POST' })
-                  .then((res) => res.json())
+                  .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
                   .then((json) => {
-                    setNightNote(json?.ok
-                      ? `跑完了：桌面页 ${json.deskBytes} 字节，并入 ${json.merged} 条`
-                      : `没跑成：${json?.reason ?? json?.errors?.[0] ?? '未知原因'}`)
+                    if (json?.ok !== true) {
+                      setNightNote(`没跑成：${json?.reason ?? json?.errors?.[0] ?? '未知原因'}`)
+                      return
+                    }
+                    // 真数从 nightly 的返回里取；取不到就说「清理数未知」，不编一个 0。
+                    const merged = Number.isFinite(Number(json.merged)) ? `${Number(json.merged)}` : '数未知'
+                    const prunedRaw = json?.settle?.pruned
+                    const pruned = Number.isFinite(Number(prunedRaw)) ? `清理 ${Number(prunedRaw)}` : '清理数未知'
+                    setNightNote(`跑完了：并入 ${merged} / ${pruned}`)
                     setTick((n) => n + 1)
                   })
-                  .catch(() => setNightNote('请求失败'))
+                  .catch((error) => setNightNote(`没跑成：${String(error?.message ?? '请求失败')}`))
                   .finally(() => setNightBusy(false))
               },
               style: {
@@ -1570,6 +1707,16 @@ window.__ModuleLoader__.load({
             key: `n${i}`,
             style: { fontSize: '11px', opacity: 0.55, margin: 0, lineHeight: 1.6 },
           }, text)),
+          // 只读态不是「控件灰了」就完事：说清为什么灰、要改该动哪个文件。
+          snaps.memory.writable || available.every((g) => g.form !== 'memory')
+            ? null
+            : h('p', {
+              style: { fontSize: '11px', color: '#ff8f8f', margin: 0, lineHeight: 1.6 },
+            }, '配置文件只读（writable=false），下面这些控件改不了。要改请手改 ~/.dsh/profiles/web/cordis.patch.yml 里 dsh-whale-memory 的 config 段（改完重启 dsh）。'),
+          // 写操作的回执说明：干等一个「值没变」看不出写没写进去。
+          h('p', {
+            style: { fontSize: '11px', opacity: 0.5, margin: 0, lineHeight: 1.6 },
+          }, '每行改动都会立刻写进配置：写中… → 已保存；失败会在行尾用红字写明原因。'),
           h('div', {
             style: {
               display: 'grid',
@@ -1597,22 +1744,30 @@ window.__ModuleLoader__.load({
               },
               h('h3', { style: { fontSize: '13px', margin: '0 0 2px', fontWeight: 600 } }, group.title),
               h('p', { style: { fontSize: '11px', opacity: 0.55, margin: '0 0 4px', lineHeight: 1.5 } }, group.hint),
-              ...group.fields.map((field) => h(Row, {
-                key: PATH_TEXT(field.path),
-                field,
-                value: pick(snap.value, field.path) ?? field.fallback,
-                overridden: pick(snap.user, field.path) !== undefined,
-                disabled,
-                onWrite: (value) => writePath(form, field.path, value),
-                onReset: () => resetPath(form, field.path),
-              })),
+              ...group.fields.map((field) => {
+                const key = PATH_TEXT(field.path)
+                return h(Row, {
+                  key,
+                  field,
+                  value: pick(snap.value, field.path),
+                  base: snap.base,
+                  overridden: pick(snap.user, field.path) !== undefined,
+                  disabled,
+                  save: save[key],
+                  onWrite: (value) => writePath(form, field.path, value, saveStateFor(key)),
+                  onReset: () => resetPath(form, field.path, saveStateFor(key)),
+                })
+              }),
             )
           }),
           ),
           h(EntriesView, {
             key: 'entries',
-            currentSpace: memoryStatus?.space ?? 'default',
-            onSwitchSpace: (name) => writePath(memoryForm, ['space'], String(name)),
+            // 配置里的空间，不是「最后一条记忆的 space」——后者会随写入漂走，
+            // 让「当前空间」随时说谎。旧字段保留给别处用，这里只认配置。
+            currentSpace: memoryStatus?.spaceConfigured ?? memoryStatus?.space ?? 'default',
+            spaceSave: save.space,
+            onSwitchSpace: (name) => writePath(memoryForm, ['space'], String(name), saveStateFor('space')),
           }),
         )
       }
@@ -1632,7 +1787,7 @@ window.__ModuleLoader__.load({
     exports.inject = ['slots']
     /** 纯函数，自检直接调，不用起浏览器。 */
     exports.__test = {
-      pick, writePath, resetPath, normalizeNumber, GROUPS,
+      pick, writePath, resetPath, normalizeNumber, GROUPS, writeStateOf,
       // 图谱几何也是纯函数：测试和 scripts/graph-svg.mjs 借这一口直接调，不复制布局代码。
       graphScene: buildGraphScene, graphLabel: glLabel, GL_W, GL_H, CAM_MIN, CAM_MAX, GL_LABEL_ZOOM,
     }
