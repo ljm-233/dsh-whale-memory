@@ -215,6 +215,36 @@ import { DatabaseSync } from 'node:sqlite'
   assert.equal(searchEntries(db, { keyword: '咖啡' }).length, 0, '撤回后主表里没有它')
   assert.equal(db.prepare("SELECT COUNT(*) c FROM revisions WHERE action='retract'").get().c, 1)
 
+  // 改口只改「说的是什么」：空间、召回计数、层级、说话人一律原地保留。
+  // 以前这里只 INSERT(u,a,t,w,emo,vec,hot)，一次改口会把 space 搬回 default、hits/tier 清零。
+  // 用一份「列齐全」的内存库验（上面那个最小 schema 的库同时验证了缺列时能降级）。
+  {
+    const full = new DatabaseSync(':memory:')
+    full.exec(`CREATE TABLE entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, u TEXT NOT NULL, a TEXT NOT NULL,
+      t INTEGER NOT NULL, w REAL NOT NULL DEFAULT 1, emo TEXT NOT NULL DEFAULT '[]',
+      vec BLOB, hot INTEGER NOT NULL DEFAULT 1, owner TEXT NOT NULL DEFAULT '',
+      space TEXT NOT NULL DEFAULT 'default', hits INTEGER NOT NULL DEFAULT 0,
+      tier INTEGER NOT NULL DEFAULT 0, lastHit INTEGER NOT NULL DEFAULT 0,
+      spk TEXT NOT NULL DEFAULT '', imp REAL)`)
+    full.exec(`CREATE TABLE revisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, entry_id INTEGER NOT NULL, action TEXT NOT NULL,
+      before_u TEXT NOT NULL, before_a TEXT NOT NULL, after_u TEXT, after_a TEXT,
+      reason TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL, actor TEXT NOT NULL DEFAULT '')`)
+    const sp = full.prepare("INSERT INTO entries(u,a,t,w,emo,hot,space,hits,tier,lastHit,spk) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+      .run('群聊里的一条', '嗯', Date.now(), 4, '[]', 0, '群聊', 3, 2, 1, 'deadbeef')
+    const keepId = Number(sp.lastInsertRowid)
+    const kept = correctEntry(full, { id: keepId, text: '群聊里改过的一条', reason: '体检' })
+    assert.equal(kept.ok, true)
+    const row = full.prepare('SELECT space, hits, tier, w, spk FROM entries WHERE id = ?').get(kept.id)
+    assert.equal(row.space, '群聊', '改口不该把条目搬回 default 空间')
+    assert.equal(row.hits, 3, '召回计数原地保留')
+    assert.equal(row.tier, 2, '层级原地保留')
+    assert.equal(row.w, 4, '权重原地保留')
+    assert.equal(row.spk, 'deadbeef', '说话人原地保留')
+    full.close()
+  }
+
   // 边界
   assert.equal(correctEntry(db, { id: 9999, text: 'x' }).ok, false)
   assert.equal(correctEntry(db, { id: 0, text: 'x' }).reason, 'bad-id')

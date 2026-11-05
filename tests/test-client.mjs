@@ -143,10 +143,12 @@ assert.equal(registration.spec.label(), '鲸娘记忆')
 const html = renderToStaticMarkup(React.createElement(registration.component))
 
 for (const text of [
-  '记忆注入', '主动联想', '日记', '自动写日记', '压缩存档',
-  '注入字符上限', '想起门槛', '顺手私发主人一份',
+  // 四区（按「我要干什么」分）
+  '它现在怎么想我', '记忆怎么收', '怎么被叫醒', '危险与诊断',
+  '注入什么进上下文', '想起哪些旧事', '日记', '自动写日记', '压缩存档',
+  '注入字符上限', '想起门槛', '存档后私发一份',
   '每天最多真正注入几次', '注入置信门槛',
-  '主动消息 · 什么时候可以说话', '主动消息 · 免打扰', '每天最多发几条', '每多少分钟检查一次',
+  '主动消息 · 什么时候可以说话', '主动消息 · 免打扰', '每天最多发几条', '多久检查一次',
   '记忆内容', '热区', '冷区', '只读',
 ]) {
   assert.ok(html.includes(text), `页面里应该出现「${text}」`)
@@ -156,11 +158,12 @@ assert.ok(html.includes('value="1000"'), '应该渲染出当前值 1000')
 // 覆盖标记还在行内，但路径与范围已经收进 title（悬停可见），不再常驻。
 assert.ok(/已改/.test(html), '用户改过的项要标出来')
 assert.ok(!html.includes('budgetChars · 已改'), '路径不再常驻行内')
-assert.ok(html.includes('title="budgetChars (50~50000)"'), '路径与取值范围放进 title')
-// 可见文本（去掉标签）里不该再有路径和范围；它们只在 title 属性里。
+assert.ok(html.includes('title="budgetChars (50–50000)"'), '路径与取值范围放进 title')
+// 三件套：单位与范围要写进可见文本（以前只藏在 title 里，等于没有）。
 const visibleText = (markup) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
-assert.ok(!visibleText(html).includes('50~50000'), '范围字不该出现在可见文本里')
-assert.ok(!visibleText(html).includes('budgetChars'), '路径不该常驻行内')
+assert.ok(visibleText(html).includes('50–50000'), '数字项要写出范围')
+assert.ok(visibleText(html).includes('默认'), '每一项都要有默认值提示')
+assert.ok(!visibleText(html).includes('budgetChars'), '路径仍然不常驻行内')
 assert.ok(html.includes('title="archive.notify"'), '嵌套字段也有 title')
 assert.ok(!html.includes('archive.enabled · 已改'), '没改过的项不能误标')
 assert.ok(!html.includes('记忆空间'), '「记忆空间」那张单行卡已并进「记忆注入」')
@@ -184,24 +187,35 @@ console.log('OK 客户端设置页')
 // ---- 写入路径 ----
 // 路径 → 写法的映射是纯函数，直接调，不用模拟点击。
 const { writePath, resetPath, normalizeNumber, GROUPS, writeStateOf } = plugin.__test
-assert.equal(GROUPS.length, 10)
-assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 8, '记忆八组（新增「情绪记账」，仍不含「记忆空间」单行卡）')
-assert.ok(GROUPS[0].fields.some((f) => f.path.join('.') === 'space'), '空间字段落在记忆注入这组')
+assert.equal(GROUPS.length, 12, '按「我要干什么」分成 12 个小节')
+assert.equal(new Set(GROUPS.map((g) => g.zone)).size, 4, '四区：现状 / 收 / 叫醒 / 诊断')
+assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 10, '记忆十组（含新增的「入库取舍」与「打分与调试」）')
+assert.ok(GROUPS.find((g) => g.title === '注入什么进上下文').fields.some((f) => f.path.join('.') === 'space'), '空间字段落在注入这一组')
 assert.equal(GROUPS.filter((g) => g.form === 'proactive').length, 2, '主动消息两组')
-assert.equal(GROUPS.flatMap((g) => g.fields).length, 38, '一共 38 个设置项（主动联想加打分公式/场景/调试三项）')
-const injection = GROUPS[0].fields.map((f) => f.path.join('.'))
+assert.equal(GROUPS.flatMap((g) => g.fields).length, 40, '一共 40 个设置项（含 admitShadow / speakerEnabled）')
+// 每一项都要三件套：说明；数字带单位、开关带开/关后果。
+for (const field of GROUPS.flatMap((g) => g.fields)) {
+  assert.ok(typeof field.desc === 'string' && field.desc.length > 0, `${field.path.join('.')} 缺一行说明`)
+  if (field.kind === 'bool') assert.ok(typeof field.note === 'string' && field.note.length > 0, `${field.path.join('.')} 开关缺「开/关会影响什么」`)
+  else if (field.kind !== 'select' && field.kind !== 'string') assert.ok(typeof field.unit === 'string' && field.unit.length > 0, `${field.path.join('.')} 数字缺单位`)
+}
+const injection = GROUPS.find((g) => g.title === '注入什么进上下文').fields.map((f) => f.path.join('.'))
 assert.ok(injection.includes('cardDailyMax'), '记忆注入这组要有「每天最多真注入几次」')
 assert.ok(injection.includes('cardMinConfidence'), '记忆注入这组要有「注入置信门槛」')
 // 三维打分：公式与场景都是下拉（kind: 'select'），调试开关是 bool。
-const assocFields = GROUPS.find((g) => g.title === '主动联想').fields
-for (const k of ['scoreMode', 'recallScene', 'axesDebug']) {
-  assert.ok(assocFields.map((f) => f.path.join('.')).includes(k), `主动联想这组要有 ${k}`)
+// 诊断区：公式/场景/调试开关收进折叠块，不在默认视图里占位。
+const diagFields = GROUPS.find((g) => g.title === '打分与调试（平时不用动）').fields
+for (const k of ['scoreMode', 'recallScene', 'axesDebug', 'speakerEnabled']) {
+  assert.ok(diagFields.map((f) => f.path.join('.')).includes(k), `诊断这组要有 ${k}`)
 }
+assert.ok(!html.includes('title="scoreMode"'), '诊断项默认收起，首屏不渲染')
+assert.ok(html.includes('展开诊断'), '要有展开诊断的入口')
+const assocFields = diagFields
 assert.ok(assocFields.some((f) => f.path.join('.') === 'recallScene' && f.kind === 'select' && f.options.length >= 4),
   '打分场景是下拉，至少四个选项（recall / lookup-old / daily / auto）')
 assert.ok(assocFields.some((f) => f.path.join('.') === 'scoreMode' && f.kind === 'select' && f.options.length === 2),
   '打分公式是下拉，两个选项（axes / legacy）')
-const moodFields = GROUPS.find((g) => g.title === '情绪记账').fields.map((f) => f.path.join('.'))
+const moodFields = GROUPS.find((g) => g.title.startsWith('情绪记账')).fields.map((f) => f.path.join('.'))
 for (const k of ['moodInjectDailyMax', 'moodInjectMinDelta', 'moodInjectCooldownHours']) {
   assert.ok(moodFields.includes(k), `情绪记账这组要有 ${k}`)
 }

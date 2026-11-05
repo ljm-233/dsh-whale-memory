@@ -10,7 +10,7 @@
  *   - 首次运行只导当天，不回溯历史；重复跑不重复写（幂等）
  *   - 退出码永远 0，错误写 stderr，留在 journal 里
  *
- * 配置（与周记共用一份，见 lib/dump-config.mjs；设置页「自动落盘 / 周记」那几项）：
+ * 配置（与周记共用一份，见 lib/dump-config.mjs；设置页「落盘与周记」那几项）：
  *   groupDump.enabled          关掉就打印一行「已关闭」并退出
  *   groupDump.dir              导出目录，默认 ~/.dsh/miyu/logs
  *   groupDump.intervalMinutes  只影响 systemd 定时器渲染，脚本本身不管间隔

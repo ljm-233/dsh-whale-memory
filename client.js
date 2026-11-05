@@ -47,123 +47,184 @@ window.__ModuleLoader__.load({
       mutate: () => Promise.resolve(false),
     }
 
+    /**
+     * 四个分区，按「我要干什么」分，不按字段出处分。
+     *
+     *   now    —— 它现在怎么想我：只读现状（记忆卡/情绪/任务栈）+ 情绪那三道闸
+     *   intake —— 记忆怎么收：写什么、留多少、怎么分层、落到哪
+     *   wake   —— 怎么被叫醒：主动消息、免打扰、夜班
+     *   diag   —— 危险与诊断：公式/调试开关（默认折叠）+ 会动真数据的按钮
+     *
+     * 每一项都带 `desc`（它影响什么）；数字带 `unit`，范围由 `min/max` 渲染；
+     * 开关带 `note`（开/关各是什么后果）。默认值不在这里写——渲染时从
+     * 表单快照的 `base` 层取，少一处副本就少一处说谎的地方。
+     */
+    const ZONES = [
+      { id: 'now', title: '它现在怎么想我', hint: '一眼看现状：还在不在、算得对不对。上面是只读预览，下面是它说自己心情的四道闸（改了下一轮就生效）。' },
+      { id: 'intake', title: '记忆怎么收', hint: '收什么进来、留多少、怎么冷热分层、落到哪个目录。改完下一轮生效，不用重启。' },
+      { id: 'wake', title: '怎么被叫醒', hint: '它自己什么时候开口、什么时候闭嘴。这几项管的是「它会不会主动出现」。' },
+      { id: 'diag', title: '危险与诊断', hint: '公式与调试开关默认收起（正常用不着动）；按钮那一栏会动真数据，点之前会再问一次。' },
+    ]
+
     const GROUPS = [
+      // ───────────── 它现在怎么想我（唯一可写的一组：情绪记账） ─────────────
       {
+        zone: 'now',
         form: 'memory',
-        title: '记忆注入',
+        title: '情绪记账（它说自己心情的闸门）',
+        hint: '每轮结束判一次心情，判的是「我这一轮说了什么」——词、句长、有没有说「不想/算了/没事」。攒够了才在上下文里说一句（一行、不带数值），说不说由下面四道闸管：一天几次、比上次动几格、隔多久、以及是否记账。关掉就整轮跳过，一个字都不写、一句都不说。',
+        fields: [
+          { path: ['moodEnabled'], label: '记账开关', kind: 'bool', desc: '整轮记不记心情', note: '开：每轮结一次账，卡片里可能出现一行心情 · 关：不写库也不开口，情绪预览会停在旧值' },
+          { path: ['moodHalfLifeHours'], label: '心情半衰期', kind: 'int', min: 1, max: 168, unit: '小时', desc: '多久回落到平静（越大越黏）' },
+          { path: ['moodInjectDailyMax'], label: '一天最多说几次', kind: 'int', min: 0, max: 50, unit: '次/天', desc: '心情那一行每天的上限' },
+          { path: ['moodInjectMinDelta'], label: '动几格才开口', kind: 'num', min: 0, max: 100, unit: '格', step: 1, desc: '比上次开口时变化多少才算值得说' },
+          { path: ['moodInjectCooldownHours'], label: '两次之间至少隔', kind: 'num', min: 0, max: 168, unit: '小时', step: 1, desc: '防止连续几轮都在说心情' },
+        ],
+      },
+
+      // ───────────── 记忆怎么收 ─────────────
+      {
+        zone: 'intake',
+        form: 'memory',
+        title: '注入什么进上下文',
         hint: '每次对话开头塞多少记忆进上下文。数字越小越省 token。空间也在这一组：换一格，写进去和想起来的都只看那一格。最后两项是闸门：一天最多真注入几次、联想没底到什么程度就不刷新这张卡（拦下时沿用上一次的卡，不会把记忆抹掉）。',
         fields: [
-          { path: ['budgetChars'], label: '注入字符上限', kind: 'int', min: 50, max: 50000 },
-          { path: ['recentPairs'], label: '热区保留轮数', kind: 'int', min: 0, max: 100 },
-          { path: ['factMax'], label: '稳定事实条数', kind: 'int', min: 0, max: 500 },
-          { path: ['space'], label: '当前空间', kind: 'string' },
-          { path: ['cardDailyMax'], label: '每天最多真正注入几次', kind: 'int', min: 0, max: 500 },
-          { path: ['cardMinConfidence'], label: '注入置信门槛（0~1）', kind: 'num', min: 0, max: 1, step: 0.01 },
+          { path: ['budgetChars'], label: '注入字符上限', kind: 'int', min: 50, max: 50000, unit: '字', desc: '整张记忆卡的硬预算，超了先砍联想再砍热区' },
+          { path: ['recentPairs'], label: '热区保留轮数', kind: 'int', min: 0, max: 100, unit: '轮', desc: '最近几轮对话原样带在身边（不用检索）' },
+          { path: ['factMax'], label: '稳定事实条数', kind: 'int', min: 0, max: 500, unit: '条', desc: '「关于你的事实」最多带几条进卡片' },
+          { path: ['space'], label: '当前空间', kind: 'string', desc: '记忆按空间隔离：换一格，写和读都只看那一格' },
+          { path: ['cardDailyMax'], label: '每天最多真正注入几次', kind: 'int', min: 0, max: 500, unit: '次/天', desc: '到顶后沿用上次的卡，不再刷新——省 token 的刹车' },
+          { path: ['cardMinConfidence'], label: '注入置信门槛', kind: 'num', min: 0, max: 1, step: 0.01, unit: '0~1', desc: '本轮联想太散（低于它）就不换卡，避免乱塞无关旧事' },
         ],
       },
       {
+        zone: 'intake',
         form: 'memory',
-        title: '主动联想',
-        hint: '它会不会自己想起旧事。门槛调高，它就安静一些。前几项只管记忆卡里的「和这次有关」那一段，不管 memory_recall 工具。打分公式与场景是同一套分怎么算出来的：axes 是相关性/重要性/时间三轴合成（0~1），legacy 是旧公式（2.0 刻度，A/B 对照用，切回去等于回到旧排序）；场景决定三套权重与半衰期——想问旧事就用 lookup-old，日常聊天用 daily，auto 按「上次/以前/那个」这类线索词自己挑。',
+        title: '想起哪些旧事',
+        hint: '它会不会自己想起旧事。门槛调高，它就安静一些。这几项管的是记忆卡里的「和这次有关」那一段，不管 memory_recall 工具。',
         fields: [
-          { path: ['recallMax'], label: '每轮最多想起几条', kind: 'int', min: 0, max: 50 },
-          { path: ['recallThreshold'], label: '想起门槛（legacy 用）', kind: 'num', min: 0, max: 1000 },
-          { path: ['weightMax'], label: '权重上限', kind: 'num', min: 1, max: 10000 },
-          { path: ['scoreMode'], label: '打分公式', kind: 'select', options: [
+          { path: ['recallMax'], label: '每轮最多想起几条', kind: 'int', min: 0, max: 50, unit: '条', desc: '联想段最多放几条旧记忆' },
+          { path: ['recallThreshold'], label: '想起门槛（legacy 用）', kind: 'num', min: 0, max: 1000, step: 0.05, unit: '分', desc: '只在打分公式=legacy 时生效；axes 用场景自带门槛' },
+          { path: ['weightMax'], label: '权重上限', kind: 'num', min: 1, max: 10000, unit: '权', step: 1, desc: '一条记忆被反复想起后最高能到多重（不设顶会一直涨）' },
+        ],
+      },
+      {
+        zone: 'intake',
+        form: 'memory',
+        title: '冷热分层',
+        hint: '热区留多少条、多重才抬进来、深一层扣多少分。改完下一轮就生效。',
+        fields: [
+          { path: ['hotZoneMax'], label: '热区条数上限', kind: 'int', min: 1, max: 200, unit: '条', desc: '热区最多留几条（这几条每轮都在上下文里）' },
+          { path: ['hotPromoteWeight'], label: '抬进热区的最低权重', kind: 'int', min: 0, max: 20, unit: '权', desc: '权重到这条线才被抬进热区' },
+          { path: ['tierPenalty'], label: '层级惩罚', kind: 'num', min: 0, max: 1, step: 0.01, unit: '分/层', desc: '冷区每深一层，排序分扣多少（越大越只用最近的事）' },
+        ],
+      },
+      {
+        zone: 'intake',
+        form: 'memory',
+        title: '入库取舍（影子）',
+        hint: '每轮先说一句话判一次「这条该不该记」，判据是纯规则（不调模型）。默认只记账不改行为：写一行到 admit 表，入库一个字不变。看够了对账再关影子。',
+        fields: [
+          { path: ['admitShadow'], label: '影子模式', kind: 'bool', desc: '只记账 vs 真按判断拦写入', note: '开（默认）：只写账，该记的都记 · 关：判成 drop 的那些真的不入库（真库样本里约三成短句会落到 drop，先看诊断区的分布再关）' },
+        ],
+      },
+      {
+        zone: 'intake',
+        form: 'memory',
+        title: '落盘与周记',
+        hint: '第二层把群聊按天落成「全量-YYYY-MM-DD.md」，第三层每周拢一份周记。改完下一轮脚本就按这里跑。',
+        fields: [
+          { path: ['groupDump', 'enabled'], label: '群聊自动落盘', kind: 'bool', desc: '把群聊原文按天写成文件', note: '开：磁盘上留全量原文，方便事后翻 · 关：只留在记忆库里，不落盘' },
+          { path: ['groupDump', 'intervalMinutes'], label: '落盘间隔', kind: 'int', min: 1, max: 1440, unit: '分钟', desc: '多久攒一次写盘（越短越实时，越费 IO）' },
+          { path: ['groupDump', 'dir'], label: '导出目录', kind: 'string', desc: '落盘文件和周记放哪；留空用记忆目录下的默认位置' },
+          { path: ['weekly', 'enabled'], label: '周记', kind: 'bool', desc: '每周拢一份摘要', note: '开：每周一份周记 · 关：只有日文件' },
+          { path: ['weekly', 'startDay'], label: '周记起始日', kind: 'int', min: 1, max: 7, unit: '1=周一…7=周日', desc: '一周从哪天算起' },
+        ],
+      },
+      {
+        zone: 'intake',
+        form: 'memory',
+        title: '压缩存档',
+        hint: '上下文被压缩时，把摘要和那段原文汇成文档。',
+        fields: [
+          { path: ['archive', 'enabled'], label: '写完整存档', kind: 'bool', desc: '压缩时把原文汇成文档', note: '开：压缩掉的聊天记录不丢，事后可翻 · 关：只剩摘要' },
+          { path: ['archive', 'notify'], label: '存档后私发一份', kind: 'bool', desc: '生成后给你发消息', note: '开：每次存档都会主动发一条（会打扰） · 关：只落盘，不发消息' },
+        ],
+      },
+      {
+        zone: 'intake',
+        form: 'memory',
+        title: '日记',
+        hint: '到点自己记一笔，不管有没有人找。这是让它「一直在」的那根线。',
+        fields: [
+          { path: ['diary', 'enabled'], label: '自动写日记', kind: 'bool', desc: '每天到点写一篇', note: '开：库里每天多一条它自己写的东西 · 关：不写，卡片里也就没有日记那一段' },
+          { path: ['diary', 'hour'], label: '每天几点之后写', kind: 'int', min: 0, max: 23, unit: '点（0–23）', desc: '过了这个点、当天还没写就补一篇' },
+        ],
+      },
+
+      // ───────────── 怎么被叫醒 ─────────────
+      {
+        zone: 'wake',
+        form: 'proactive',
+        title: '主动消息 · 什么时候可以说话',
+        hint: '它自己判断该不该开口时的几个门槛。',
+        fields: [
+          { path: ['dailyCap'], label: '每天最多发几条', kind: 'int', min: 0, max: 500, unit: '条/天', desc: '主动消息的日上限（0 = 完全不主动开口）' },
+          { path: ['cooldownHours'], label: '两次之间至少隔', kind: 'num', min: 0, max: 720, unit: '小时', step: 1, desc: '刚说过话就不再补一句' },
+          { path: ['silenceHours'], label: '多久没说话才算安静', kind: 'num', min: 0, max: 720, unit: '小时', step: 1, desc: '安静到这个程度才有理由主动开口' },
+        ],
+      },
+      {
+        zone: 'wake',
+        form: 'proactive',
+        title: '主动消息 · 免打扰',
+        hint: '这个时段一律不发。开始和结束填一样就是不启用。',
+        fields: [
+          { path: ['quietStart'], label: '从几点开始', kind: 'int', min: 0, max: 23, unit: '点（0–23）', desc: '免打扰起点（跨午夜也支持）' },
+          { path: ['quietEnd'], label: '到几点结束', kind: 'int', min: 0, max: 23, unit: '点（0–23）', desc: '免打扰终点；和起点相同=不启用' },
+          { path: ['tickMinutes'], label: '多久检查一次', kind: 'int', min: 1, max: 1440, unit: '分钟', desc: '多久醒一次看要不要说话（越小越及时，越费电）' },
+        ],
+      },
+      {
+        zone: 'wake',
+        form: 'memory',
+        title: '夜班 / 桌面页',
+        hint: '一天一次结账：并日档、清理冷区、重蒸桌面页。桌面页是它每天最先读到的那一页。',
+        fields: [
+          { path: ['night', 'enabled'], label: '每天自动跑', kind: 'bool', desc: '到点自己结账', note: '开：每天自动并日档、清理冷区 · 关：只能手动点「立刻跑一班」' },
+          { path: ['night', 'hour'], label: '几点开', kind: 'int', min: 0, max: 23, unit: '点（0–23）', fallback: 22, desc: '夜班开始的小时' },
+          { path: ['night', 'minute'], label: '几分开始', kind: 'int', min: 0, max: 59, unit: '分（0–59）', fallback: 5, desc: '夜班开始的分钟' },
+        ],
+      },
+
+      // ───────────── 危险与诊断（默认折叠） ─────────────
+      {
+        zone: 'diag',
+        form: 'memory',
+        title: '打分与调试（平时不用动）',
+        hint: '公式与场景决定「旧事怎么排」。axes 是相关性/重要性/时间三轴合成（0~1）；legacy 是旧公式（2.0 刻度，A/B 对照用，切回去等于回到旧排序）。场景决定三套权重与半衰期：想问旧事用 lookup-old，日常聊天用 daily，auto 按「上次/以前/那个」这类线索词自己挑。',
+        fields: [
+          { path: ['scoreMode'], label: '打分公式', kind: 'select', desc: '换公式会换整段联想的排序', options: [
             { value: 'axes', label: 'axes · 三维（相关性/重要性/时间）' },
             { value: 'legacy', label: 'legacy · 旧公式（A/B 对照）' },
           ] },
-          { path: ['recallScene'], label: '打分场景', kind: 'select', options: [
+          { path: ['recallScene'], label: '打分场景', kind: 'select', desc: '决定权重与半衰期（旧事排多前）', options: [
             { value: 'recall', label: 'recall · 主动联想（默认）' },
             { value: 'lookup-old', label: 'lookup-old · 查旧事（十年半衰）' },
             { value: 'daily', label: 'daily · 日常对话（旧事别抢戏）' },
             { value: 'auto', label: 'auto · 按线索词自己挑' },
           ] },
-          { path: ['axesDebug'], label: '日志打印三轴分解', kind: 'bool' },
+          { path: ['axesDebug'], label: '日志打印三轴分解', kind: 'bool', desc: '排查「是不是在乱排」时才开', note: '开：每轮往日志里打 rel/imp/time 三个数与权重 · 关：不打（默认）' },
+          { path: ['speakerEnabled'], label: '记录说话人', kind: 'bool', desc: '每条记忆带上「谁说的」', note: '开：新记忆写 spk（按群库对齐） · 关：一律写空串，写入行为回到 0.28.17' },
         ],
       },
-      {
-        form: 'memory',
-        title: '冷热分层',
-        hint: '热区留多少条、多重才抬进来、深一层扣多少分。改完下一轮就生效。',
-        fields: [
-          { path: ['hotZoneMax'], label: '热区条数上限', kind: 'int', min: 1, max: 200 },
-          { path: ['hotPromoteWeight'], label: '抬进热区的最低权重', kind: 'int', min: 0, max: 20 },
-          { path: ['tierPenalty'], label: '层级惩罚（每深一层扣分）', kind: 'num', min: 0, max: 1, step: 0.01 },
-        ],
-      },
-      {
-        form: 'memory',
-        title: '情绪记账',
-        hint: '每轮结束判一次心情，判的是「我这一轮说了什么」——词、句长、有没有说「不想 / 算了 / 没事」、是不是自己开的口；对方的话只算一点冲击。攒够了才在上下文里说一句（一行、不带数值），说不说由下面三道闸管：一天最多几次、比上次开口动了几格、两次之间隔多久。关掉就整轮跳过，一个字都不写、一句都不说。',
-        fields: [
-          { path: ['moodEnabled'], label: '记账', kind: 'bool' },
-          { path: ['moodHalfLifeHours'], label: '心情半衰期（小时）', kind: 'int', min: 1, max: 168 },
-          { path: ['moodInjectDailyMax'], label: '一天最多说几次', kind: 'int', min: 0, max: 50 },
-          { path: ['moodInjectMinDelta'], label: '比上次开口动几格才说', kind: 'num', min: 0, max: 100 },
-          { path: ['moodInjectCooldownHours'], label: '两次之间至少隔几小时', kind: 'num', min: 0, max: 168 },
-        ],
-      },
-      {
-        form: 'memory',
-        title: '夜班 / 桌面页',
-        hint: '一天一次结账，蒸出下一轮要读的那一页。',
-        fields: [
-          { path: ['night', 'enabled'], label: '每天自动跑', kind: 'bool', fallback: true },
-          { path: ['night', 'hour'], label: '几点开（0–23）', kind: 'int', min: 0, max: 23, fallback: 22 },
-          { path: ['night', 'minute'], label: '几分开（0–59）', kind: 'int', min: 0, max: 59, fallback: 5 },
-        ],
-      },
-      {
-        form: 'memory',
-        title: '日记',
-        hint: '到点自己记一笔，不管有没有人找。这是让它「一直在」的那根线。',
-        fields: [
-          { path: ['diary', 'enabled'], label: '自动写日记', kind: 'bool' },
-          { path: ['diary', 'hour'], label: '每天几点之后写（0–23）', kind: 'int', min: 0, max: 23 },
-        ],
-      },
-      {
-        form: 'memory',
-        title: '压缩存档',
-        hint: '上下文被压缩时，把摘要和那段原文汇成文档。',
-        fields: [
-          { path: ['archive', 'enabled'], label: '写完整存档到磁盘', kind: 'bool' },
-          { path: ['archive', 'notify'], label: '顺手私发主人一份', kind: 'bool' },
-        ],
-      },
-      {
-        form: 'memory',
-        title: '自动落盘 / 周记',
-        hint: '第二层把群聊按天落成「全量-YYYY-MM-DD.md」，第三层每周拢一份周记。改完下一轮脚本就按这里跑。',
-        fields: [
-          { path: ['groupDump', 'enabled'], label: '自动落盘', kind: 'bool' },
-          { path: ['groupDump', 'intervalMinutes'], label: '落盘间隔（分钟）', kind: 'int', min: 1, max: 1440 },
-          { path: ['weekly', 'enabled'], label: '周记', kind: 'bool' },
-          { path: ['weekly', 'startDay'], label: '周记起始日（1=周一 … 7=周日）', kind: 'int', min: 1, max: 7 },
-          { path: ['groupDump', 'dir'], label: '导出目录', kind: 'string' },
-        ],
-      },
-      {
-        form: 'proactive',
-        title: '主动消息 · 什么时候可以说话',
-        hint: '它自己判断该不该开口时的几个门槛。',
-        fields: [
-          { path: ['dailyCap'], label: '每天最多发几条', kind: 'int', min: 0, max: 500 },
-          { path: ['cooldownHours'], label: '两次之间至少隔几小时', kind: 'num', min: 0, max: 720 },
-          { path: ['silenceHours'], label: '多久没说话才算安静（小时）', kind: 'num', min: 0, max: 720 },
-        ],
-      },
-      {
-        form: 'proactive',
-        title: '主动消息 · 免打扰',
-        hint: '这个时段一律不发。开始和结束填一样就是不启用。',
-        fields: [
-          { path: ['quietStart'], label: '从几点开始（0–23）', kind: 'int', min: 0, max: 23 },
-          { path: ['quietEnd'], label: '到结束（0–23）', kind: 'int', min: 0, max: 23 },
-          { path: ['tickMinutes'], label: '每多少分钟检查一次', kind: 'int', min: 1, max: 1440 },
-        ],
-      },
+    ]
+
+    /** 危险与诊断区里那一排按钮：会动真数据，点之前再问一次。 */
+    const ACTIONS = [
+      { id: 'nightly', label: '立刻跑一班', desc: '结账：并日档、清理冷区、重蒸桌面页、对齐任务栈', confirm: '手动跑一班？会把今天新攒的记忆并入日档，并清理冷区里太老又低权重的条目。' },
+      { id: 'backup', label: '备份一份', desc: '把库复制到备份目录（当天那份会被覆盖）', confirm: '现在备份一份记忆库？当天已有的备份会被覆盖。' },
+      { id: 'desk', label: '重蒸桌面页', desc: '重算它每天最先读到的那一页（不调模型，几毫秒）', confirm: '' },
     ]
 
     const PATH_TEXT = (path) => path.join('.')
@@ -702,6 +763,48 @@ window.__ModuleLoader__.load({
   // ───────────────────────── /图谱几何 ─────────────────────────
 
 
+    /**
+     * 顶部状态条要报的六格：版本 / 安装副本 / 条目 / 今日注入 / 情绪 / 任务栈。
+     *
+     * 纯函数：只吃 `/status` 和 `/mood` 的返回，不碰 DOM、不碰 fetch——
+     * 这样服务端渲染、测试、脚本都能直接拿到「一眼看活着没有」的那一行字。
+     *
+     * @param {object|null} status /status 的返回
+     * @param {object|null} mood /mood 的返回
+     * @param {unknown} cap 当前配置的「每天最多真注入几次」
+     * @returns {Array<{label:string, value:string, hint:string}>}
+     */
+    const statusChipsOf = (status, mood, cap) => {
+      const dayOf = () => {
+        const d = new Date()
+        const p2 = (n) => String(n).padStart(2, '0')
+        return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+      }
+      const rec = status?.cardInject ?? {}
+      const today = rec.day === dayOf() ? Number(rec.count ?? 0) : 0
+      const capText = typeof cap === 'number' ? ` / ${cap}` : ''
+      const skip = rec.lastSkip && rec.lastSkip.reason
+        ? `${String(rec.lastSkip.reason)}${rec.lastSkip.conf != null ? `（置信 ${Number(rec.lastSkip.conf).toFixed(2)}）` : ''}`
+        : ''
+      const inst = status?.install ?? null
+      const instValue = inst === null ? '?' : (inst.synced === true ? '同步' : (inst.installed === null ? '没装' : '不同步'))
+      const instHint = inst === null
+        ? ''
+        : (inst.synced === true
+          ? (inst.installed === inst.running ? `v${inst.installed}` : '')
+          : (Array.isArray(inst.drift) && inst.drift.length > 0 ? `差：${inst.drift.join('、')}` : '跑 scripts/check-all.mjs 逐字节比'))
+      const recent = Array.isArray(mood?.recent) ? mood.recent[0] : null
+      const taskOpen = status?.taskStack?.open
+      return [
+        { label: '版本', value: `v${status?.pluginVersion ?? '?'}`, hint: status?.axes?.envOverride === true ? '环境变量覆盖了打分' : '' },
+        { label: '安装副本', value: instValue, hint: instHint },
+        { label: '条目', value: `${(status?.hot ?? 0) + (status?.cold ?? 0)} 条`, hint: `热 ${status?.hot ?? 0} · 冷 ${status?.cold ?? 0}` },
+        { label: '今日注入', value: `${today}${capText}`, hint: skip === '' ? (today > 0 ? '今天带过记忆' : '今天还没真注入') : `上次跳过：${skip}` },
+        { label: '情绪', value: recent && recent.mood !== undefined ? String(Math.round(Number(recent.mood))) : (mood === null ? '?' : '没记账'), hint: recent?.reason ? String(recent.reason).slice(0, 28) : (mood === null ? '' : '还没开口说过') },
+        { label: '任务栈', value: taskOpen === undefined ? '?' : `${taskOpen} 条`, hint: String(status?.taskStack?.top?.[0]?.title ?? '').slice(0, 24) },
+      ]
+    }
+
     const apply = (ctx) => {
       const React = require('react')
       const h = React.createElement
@@ -834,11 +937,28 @@ window.__ModuleLoader__.load({
         })()
 
         const range = field.min !== undefined || field.max !== undefined
-          ? `${field.min ?? ''}~${field.max ?? ''}`
+          ? `${field.min ?? ''}–${field.max ?? ''}`
           : ''
         const hover = `${PATH_TEXT(field.path)}${range === '' ? '' : ` (${range})`}`
         const saveText = writeStateOf(save)
         const saveFailed = save !== undefined && save !== null && save.status === 'error'
+
+        // 默认值不写死在客户端：一律从快照的 base 层取（schema 默认就是那一份）。
+        const baseShown = pick(base, field.path)
+        const baseText = baseShown === undefined || baseShown === null || baseShown === ''
+          ? ''
+          : (typeof baseShown === 'boolean' ? (baseShown ? '开' : '关') : String(baseShown))
+        // 三件套：说明（它影响什么）→ 单位与范围 → 默认值 → 有没有改过。
+        const metaBits = []
+        if (field.kind === 'bool') {
+          if (field.note) metaBits.push(field.note)
+        } else {
+          if (field.unit) metaBits.push(field.unit)
+          if (range !== '') metaBits.push(`范围 ${range}`)
+        }
+        if (baseText !== '') metaBits.push(`默认 ${baseText}`)
+        if (overridden) metaBits.push('已改')
+        else if (usingDefault) metaBits.push('用默认')
 
         return h(
           'div',
@@ -847,12 +967,10 @@ window.__ModuleLoader__.load({
             'div',
             { style: labelStyle },
             h('span', { style: nameStyle }, field.label),
-            h(
-              'span',
-              { style: metaStyle },
-              usingDefault ? '默认值' : '',
-              overridden ? (usingDefault ? ' · 已改' : '已改') : '',
-            ),
+            field.desc
+              ? h('span', { style: { fontSize: '11px', opacity: 0.55, lineHeight: 1.45 } }, field.desc)
+              : null,
+            h('span', { style: metaStyle }, metaBits.join(' · ')),
           ),
           h(
             'div',
@@ -1605,6 +1723,11 @@ window.__ModuleLoader__.load({
         const [selfCheck, setSelfCheck] = React.useState(null)
         const [nightBusy, setNightBusy] = React.useState(false)
         const [nightNote, setNightNote] = React.useState('')
+        // 诊断区默认收起：公式/场景/调试开关平时不该占视线。
+        const [diagOpen, setDiagOpen] = React.useState(false)
+        // 情绪现值：状态条和「它现在怎么想我」都读它。
+        const [moodNow, setMoodNow] = React.useState(null)
+        const [actionNote, setActionNote] = React.useState('')
         const [tick, setTick] = React.useState(0)
         // 每个字段的写回执：key = 字段路径。写中…/已保存/失败：原因，就地显示。
         const [save, setSave] = React.useState({})
@@ -1622,6 +1745,7 @@ window.__ModuleLoader__.load({
           load(PROACTIVE_STATUS_URL, setProactiveStatus)
           load('/dsh-whale-memory/trend?days=7', setTrend)
           load(SELF_CHECK_URL, setSelfCheck)
+          load('/dsh-whale-memory/mood?days=7', setMoodNow)
           return () => { alive = false }
         }, [tick])
 
@@ -1637,22 +1761,185 @@ window.__ModuleLoader__.load({
           return h('p', { style: { fontSize: '13px', opacity: 0.75 } }, '这两个插件条目都没有暴露配置，先确认它们已经在 profile 里启用。')
         }
 
-        const statGrid = memoryStatus === null
-          ? null
+        // ───────────── 顶部状态条：一眼看「活着没有、对不对」 ─────────────
+        const capRaw = pick(snaps.memory.value, ['cardDailyMax'])
+        const injectRec = memoryStatus?.cardInject ?? {}
+        const today = localDayKey()
+        const injectToday = injectRec.day === today ? Number(injectRec.count ?? 0) : 0
+        const capText = typeof capRaw === 'number' ? ` / ${capRaw}` : ''
+        const lastSkip = injectRec.lastSkip && injectRec.lastSkip.reason
+          ? `${String(injectRec.lastSkip.reason)}${injectRec.lastSkip.conf != null ? `（置信 ${Number(injectRec.lastSkip.conf).toFixed(2)}）` : ''}`
+          : ''
+        const taskOpen = memoryStatus?.taskStack?.open
+        // 「它现在怎么想我」和诊断区都要这两样：情绪那一格、安装副本那一格。
+        const moodRec = Array.isArray(moodNow?.recent) ? moodNow.recent[0] : null
+        const inst = memoryStatus?.install ?? null
+        const chips = statusChipsOf(memoryStatus, moodNow, capRaw)
+        const statusBar = h('div', {
+          style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(112px, 1fr))', gap: '8px' },
+        }, ...chips.map((c) => Stat(c.label, c.value, c.hint)))
+
+        // ───────────── 它现在怎么想我（只读预览） ─────────────
+        const previewLine = (label, text) => h('div', {
+          key: label,
+          style: { display: 'flex', gap: '8px', alignItems: 'baseline', minWidth: 0 },
+        },
+        h('span', { style: { fontSize: '11px', opacity: 0.5, minWidth: '72px', flexShrink: 0 } }, label),
+        h('span', { style: { fontSize: '12px', lineHeight: 1.5, minWidth: 0, overflowWrap: 'anywhere' } }, text),
+        )
+
+        const nowView = memoryStatus === null
+          ? h('p', { style: { fontSize: '11px', opacity: 0.55, margin: 0 } }, '读不到状态（/status 没回），下面是配置项。')
           : h('div', {
-            style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))', gap: '8px' },
+            style: {
+              display: 'flex', flexDirection: 'column', gap: '6px',
+              border: '1px solid rgba(128,128,128,0.18)', borderRadius: '10px',
+              padding: '10px 12px', background: 'rgba(128,128,128,0.04)',
+            },
           },
-          Stat('热区', `${memoryStatus.hot ?? '?'} 条`),
-          Stat('冷区', `${memoryStatus.cold ?? '?'} 条`),
-          Stat('事实', `${memoryStatus.facts ?? '?'} 条`),
-          Stat('场景', `${memoryStatus.scenes ?? 0} 段`),
-          Stat('空间', `${memoryStatus.spaces ?? 0} 个`, String(memoryStatus.spaceConfigured ?? 'default')),
-          Stat('向量', memoryStatus.embedOk ? '正常' : '降级'),
-          Stat('想起', `${memoryStatus.stats?.recalled ?? 0} 次`),
-          Stat('蒸馏', `${memoryStatus.stats?.distillCalls ?? 0} 次`),
-          Stat('桌面页', selfCheck === null ? '?' : `${selfCheck.deskBytes ?? 0} 字节`),
-          Stat('今晚并入', selfCheck === null ? '?' : `${selfCheck.mergedTonight ?? 0} 条`),
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px' } },
+            h('span', { style: { fontSize: '12px', fontWeight: 600 } }, '这一轮它会带什么进上下文'),
+            h('span', { style: { fontSize: '10px', opacity: 0.45 } }, '只读预览 · 这里不能改'),
+          ),
+          previewLine('记忆卡', `已注入 ${injectToday}${capText || ' 次'} · 卡片 ${injectRec.lastChars ? `${injectRec.lastChars} 字` : '还没交出去过'}`
+            + (lastSkip === '' ? '' : ` · 上次被拦下：${lastSkip}`)),
+          previewLine('在身上的', `热区 ${memoryStatus.hot ?? 0} 条 · 事实 ${memoryStatus.facts ?? 0} 条 · 场景 ${memoryStatus.scenes ?? 0} 段 · 日记 ${memoryStatus.diary ?? 0} 篇`),
+          previewLine('能想起来', `最多 ${pick(snaps.memory.value, ['recallMax']) ?? '?'} 条/轮 · 公式 ${memoryStatus.axes?.mode ?? '?'} · 场景 ${memoryStatus.axes?.scene ?? '?'}（门槛 ${memoryStatus.axes?.threshold ?? '?'}）`),
+          previewLine('情绪', moodRec
+            ? `${Math.round(Number(moodRec.mood))} / 100 · 上次开口：${String(moodRec.reason ?? '').slice(0, 60)}`
+            : '还没有记账'),
+          previewLine('任务栈', taskOpen === undefined || taskOpen === 0
+            ? '空（NEXT.md 里没有未完成项，或还没同步）'
+            : `${taskOpen} 条 · 栈顶：${(memoryStatus.taskStack?.top ?? []).map((t) => t.title).slice(0, 3).join(' / ')}`),
           )
+
+        // ───────────── 危险与诊断：诊断统计（折叠里） ─────────────
+        const diagStats = (() => {
+          if (memoryStatus === null) return null
+          const sp = memoryStatus.speaker ?? {}
+          const ad = memoryStatus.admit ?? {}
+          const rows = [
+            ['打分公式', `${memoryStatus.axes?.mode ?? '?'}（配置 ${memoryStatus.axes?.sceneConfigured ?? '?'} → 生效 ${memoryStatus.axes?.scene ?? '?'}）`],
+            ['门槛', String(memoryStatus.axes?.threshold ?? '?')],
+            ['三轴调试日志', memoryStatus.axes?.debug === true ? '开' : '关'],
+            ['说话人覆盖率', sp.migrated === false ? '库还没迁移（spk 列不存在）' : `${sp.covered ?? 0} / ${sp.total ?? 0} = ${Math.round(Number(sp.ratio ?? 0) * 1000) / 10}%`],
+            ['取舍影子（近 7 天）', `判 ${ad.total ?? 0} 条 · keep ${ad.keep ?? 0} / log-only ${ad.logOnly ?? 0} / drop ${ad.drop ?? 0} · 真拦下 ${ad.applied ?? 0}${ad.enforcing === true ? '（影子已关，正在拦）' : '（影子开着，只记账）'}`],
+            ['向量服务', `${memoryStatus.embedOk ? '正常' : '降级'} ${memoryStatus.embedUrl ?? ''}`],
+            ['运行位置', String(inst?.runningFrom ?? memoryStatus.dbPath ?? '')],
+          ]
+          return h('div', {
+            style: {
+              display: 'flex', flexDirection: 'column', gap: '4px',
+              border: '1px solid rgba(128,128,128,0.18)', borderRadius: '10px',
+              padding: '10px 12px', background: 'rgba(128,128,128,0.04)', marginTop: '2px',
+            },
+          }, ...rows.map(([k, v]) => previewLine(k, v)))
+        })()
+
+        // 一个配置小节：标题 + 一句话说明 + 若干 Row。
+        const renderGroup = (group) => {
+          const form = forms[group.form]
+          const snap = snaps[group.form]
+          const disabled = !snap.writable
+          return h(
+            'section',
+            {
+              key: `${group.zone ?? 'intake'}-${group.title}`,
+              style: {
+                display: 'flex',
+                flexDirection: 'column',
+                border: '1px solid rgba(128,128,128,0.18)',
+                borderRadius: '10px',
+                padding: '10px 12px 4px',
+                minWidth: 0,
+              },
+            },
+            h('h3', { style: { fontSize: '13px', margin: '0 0 2px', fontWeight: 600 } }, group.title),
+            h('p', { style: { fontSize: '11px', opacity: 0.55, margin: '0 0 4px', lineHeight: 1.5 } }, group.hint),
+            ...group.fields.map((field) => {
+              const key = PATH_TEXT(field.path)
+              return h(Row, {
+                key,
+                field,
+                value: pick(snap.value, field.path),
+                base: snap.base,
+                overridden: pick(snap.user, field.path) !== undefined,
+                disabled,
+                save: save[key],
+                onWrite: (value) => writePath(form, field.path, value, saveStateFor(key)),
+                onReset: () => resetPath(form, field.path, saveStateFor(key)),
+              })
+            }),
+          )
+        }
+
+        // ───────────── 危险操作：会动真数据，先问一句 ─────────────
+        const runAction = (action) => {
+          if (action.confirm !== '' && !window.confirm(action.confirm)) return
+          const url = action.id === 'nightly' ? NIGHTLY_URL : action.id === 'backup' ? '/dsh-whale-memory/backups' : '/dsh-whale-memory/desk'
+          if (action.id === 'nightly') { setNightBusy(true); setNightNote('') } else { setActionNote(`${action.label}…`) }
+          fetch(url, { method: 'POST', headers: { accept: 'application/json' } })
+            .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+            .then((json) => {
+              if (json?.ok !== true) {
+                const why = json?.reason ?? json?.errors?.[0] ?? '未知原因'
+                if (action.id === 'nightly') setNightNote(`没跑成：${why}`)
+                else setActionNote(`${action.label}没成：${why}`)
+                return
+              }
+              if (action.id === 'nightly') {
+                const merged = Number.isFinite(Number(json.merged)) ? `${Number(json.merged)}` : '数未知'
+                const pruned = Number.isFinite(Number(json?.settle?.pruned)) ? `清理 ${Number(json.settle.pruned)}` : '清理数未知'
+                setNightNote(`跑完了：并入 ${merged} / ${pruned}`)
+              } else if (action.id === 'backup') {
+                setActionNote(`备好了：${json.bytes ?? 0} 字节 · ${json.path ?? ''}`)
+              } else {
+                setActionNote(`重蒸好了：${json.bytes ?? 0} 字节`)
+              }
+              setTick((n) => n + 1)
+            })
+            .catch((error) => {
+              const why = String(error?.message ?? '请求失败')
+              if (action.id === 'nightly') setNightNote(`没跑成：${why}`)
+              else setActionNote(`${action.label}没成：${why}`)
+            })
+            .finally(() => { if (action.id === 'nightly') setNightBusy(false) })
+        }
+
+        const pillStyle = {
+          border: '1px solid rgba(128,128,128,0.35)',
+          borderRadius: '999px',
+          padding: '3px 12px',
+          fontSize: '11px',
+          background: 'transparent',
+          color: 'inherit',
+          cursor: 'pointer',
+          opacity: 0.85,
+          flexShrink: 0,
+        }
+
+        const actionBar = h('section', {
+          style: {
+            display: 'flex', flexDirection: 'column', gap: '6px',
+            border: '1px solid rgba(200,120,120,0.35)', borderRadius: '10px', padding: '10px 12px',
+          },
+        },
+        h('h3', { style: { fontSize: '13px', margin: 0, fontWeight: 600 } }, '会动真数据的按钮'),
+        ...ACTIONS.map((action) => h('div', {
+          key: action.id,
+          style: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' },
+        },
+        h('button', {
+          type: 'button',
+          disabled: action.id === 'nightly' && nightBusy,
+          onClick: () => runAction(action),
+          style: { ...pillStyle, cursor: action.id === 'nightly' && nightBusy ? 'progress' : 'pointer', opacity: action.id === 'nightly' && nightBusy ? 0.5 : 0.85 },
+        }, action.id === 'nightly' && nightBusy ? '跑着…' : action.label),
+        h('span', { style: { fontSize: '11px', opacity: 0.55 } }, action.desc),
+        )),
+        h('span', { style: { fontSize: '11px', opacity: 0.6 } },
+          [nightNote, actionNote, selfCheck?.logFile ? `日志：${selfCheck.logFile}` : ''].filter((x) => x !== '').join(' · ')),
+        )
 
         const footNotes = []
         if (memoryStatus !== null) {
@@ -1662,8 +1949,6 @@ window.__ModuleLoader__.load({
           footNotes.push(`近 7 天：${trend.series.map((d) => `${d.day.slice(5)} 蒸馏 ${d.distillCalls ?? 0} / 想起 ${d.recalled ?? 0}`).join('　')}`)
         }
         if (proactiveStatus !== null) {
-          // lastSentAt 是状态里真实存在的字段；以前读 decision.reason，那里根本没有，
-          // 于是永远显示一个「?」——宁可说「还没跑过」，也不摆个问号糊弄。
           const lastSentAt = proactiveStatus.state?.lastSentAt
           footNotes.push(`主动消息：${proactiveStatus.isQuietHours ? '免打扰中' : '可发'} · 今天 ${proactiveStatus.state?.dailyCount?.[localDayKey()] ?? 0} 条 · ${lastSentAt ? `上次开口 ${fmtTime(Number(lastSentAt))}` : '还没跑过'}`)
         }
@@ -1682,131 +1967,59 @@ window.__ModuleLoader__.load({
           h('button', {
             type: 'button',
             onClick: () => setTick((n) => n + 1),
-            style: {
-              border: '1px solid rgba(128,128,128,0.35)',
-              borderRadius: '999px',
-              padding: '2px 10px',
-              fontSize: '11px',
-              background: 'transparent',
-              color: 'inherit',
-              cursor: 'pointer',
-              opacity: 0.75,
-              flexShrink: 0,
-            },
+            style: { ...pillStyle, opacity: 0.75 },
           }, '刷新'),
           ),
-          statGrid,
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' } },
-            h('button', {
-              type: 'button',
-              disabled: nightBusy,
-              onClick: () => {
-                if (nightBusy) return
-                // 手动跑一班是会动真数据的：先说清它要做哪两件事，再问要不要。
-                const pending = Number.isFinite(Number(selfCheck?.mergedTonight)) ? Number(selfCheck.mergedTonight) : null
-                const ask = [
-                  '手动跑一班夜班？它现在会做两件事：',
-                  `1) 把今天新攒的记忆并入日档（现在 ${pending === null ? '数未知' : `${pending} 条`}）；`,
-                  '2) 清理冷区里太老、权重又低的条目。',
-                  '',
-                  '要现在跑吗？',
-                ].join('\n')
-                if (!window.confirm(ask)) return
-                setNightBusy(true)
-                setNightNote('')
-                fetch(NIGHTLY_URL, { method: 'POST' })
-                  .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
-                  .then((json) => {
-                    if (json?.ok !== true) {
-                      setNightNote(`没跑成：${json?.reason ?? json?.errors?.[0] ?? '未知原因'}`)
-                      return
-                    }
-                    // 真数从 nightly 的返回里取；取不到就说「清理数未知」，不编一个 0。
-                    const merged = Number.isFinite(Number(json.merged)) ? `${Number(json.merged)}` : '数未知'
-                    const prunedRaw = json?.settle?.pruned
-                    const pruned = Number.isFinite(Number(prunedRaw)) ? `清理 ${Number(prunedRaw)}` : '清理数未知'
-                    setNightNote(`跑完了：并入 ${merged} / ${pruned}`)
-                    setTick((n) => n + 1)
-                  })
-                  .catch((error) => setNightNote(`没跑成：${String(error?.message ?? '请求失败')}`))
-                  .finally(() => setNightBusy(false))
-              },
-              style: {
-                border: '1px solid rgba(128,128,128,0.35)',
-                borderRadius: '999px',
-                padding: '3px 12px',
-                fontSize: '11px',
-                background: 'transparent',
-                color: 'inherit',
-                cursor: nightBusy ? 'progress' : 'pointer',
-                opacity: nightBusy ? 0.5 : 0.85,
-              },
-            }, nightBusy ? '跑着…' : '立刻跑一班'),
-            h('span', { style: { fontSize: '11px', opacity: 0.55 } },
-              nightNote !== '' ? nightNote : (selfCheck?.logFile ? `日志：${selfCheck.logFile}` : '')),
-          ),
-          ...footNotes.map((text, i) => h('p', {
-            key: `n${i}`,
-            style: { fontSize: '11px', opacity: 0.55, margin: 0, lineHeight: 1.6 },
-          }, text)),
+          statusBar,
           // 只读态不是「控件灰了」就完事：说清为什么灰、要改该动哪个文件。
           snaps.memory.writable || available.every((g) => g.form !== 'memory')
             ? null
             : h('p', {
               style: { fontSize: '11px', color: '#ff8f8f', margin: 0, lineHeight: 1.6 },
             }, '配置文件只读（writable=false），下面这些控件改不了。要改请手改 ~/.dsh/profiles/web/cordis.patch.yml 里 dsh-whale-memory 的 config 段（改完重启 dsh）。'),
-          // 写操作的回执说明：干等一个「值没变」看不出写没写进去。
           h('p', {
             style: { fontSize: '11px', opacity: 0.5, margin: 0, lineHeight: 1.6 },
-          }, '每行改动都会立刻写进配置：写中… → 已保存；失败会在行尾用红字写明原因。'),
-          h('div', {
-            style: {
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-              gap: '12px',
-              alignItems: 'start',
-            },
-          },
-          ...available.map((group) => {
-            const form = forms[group.form]
-            const snap = snaps[group.form]
-            const disabled = !snap.writable
-            return h(
-              'section',
-              {
-                key: group.title,
-                style: {
-                  display: 'flex',
-                  flexDirection: 'column',
-                  border: '1px solid rgba(128,128,128,0.18)',
-                  borderRadius: '10px',
-                  padding: '10px 12px 4px',
-                  minWidth: 0,
-                },
-              },
-              h('h3', { style: { fontSize: '13px', margin: '0 0 2px', fontWeight: 600 } }, group.title),
-              h('p', { style: { fontSize: '11px', opacity: 0.55, margin: '0 0 4px', lineHeight: 1.5 } }, group.hint),
-              ...group.fields.map((field) => {
-                const key = PATH_TEXT(field.path)
-                return h(Row, {
-                  key,
-                  field,
-                  value: pick(snap.value, field.path),
-                  base: snap.base,
-                  overridden: pick(snap.user, field.path) !== undefined,
-                  disabled,
-                  save: save[key],
-                  onWrite: (value) => writePath(form, field.path, value, saveStateFor(key)),
-                  onReset: () => resetPath(form, field.path, saveStateFor(key)),
-                })
-              }),
+          }, '每行都是「说明 → 单位/范围 → 默认值」三件套；改动立刻写进配置：写中… → 已保存，失败在行尾红字写原因。'),
+          ...ZONES.map((zone) => {
+            const zoneGroups = available.filter((g) => (g.zone ?? 'intake') === zone.id)
+            const body = []
+            if (zone.id === 'now') body.push(nowView)
+            if (zone.id === 'diag') {
+              body.push(h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+                h('button', { type: 'button', onClick: () => setDiagOpen((v) => !v), style: pillStyle },
+                  diagOpen ? '收起诊断' : '展开诊断'),
+                h('span', { style: { fontSize: '11px', opacity: 0.55 } },
+                  diagOpen ? '公式 / 场景 / 三轴调试 / 说话人覆盖率 / 取舍影子统计' : '公式、场景、三轴调试、说话人覆盖率、取舍影子统计——平时不用看'),
+              ))
+              if (diagOpen) {
+                if (diagStats !== null) body.push(diagStats)
+                body.push(...zoneGroups.map(renderGroup))
+              }
+              body.push(actionBar)
+            } else {
+              if (zone.id === 'now' && memoryStatus !== null) {
+                body.push(h('div', {
+                  style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px', alignItems: 'start' },
+                }, ...zoneGroups.map(renderGroup)))
+              } else {
+                body.push(...zoneGroups.map(renderGroup))
+              }
+            }
+            if (body.length === 0) return null
+            return h('section', { key: zone.id, style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+              h('h2', { style: { fontSize: '14px', margin: 0, fontWeight: 600 } }, zone.title),
+              h('p', { style: { fontSize: '11px', opacity: 0.55, margin: 0, lineHeight: 1.5 } }, zone.hint),
+              ...body,
             )
           }),
-          ),
+          ...footNotes.map((text, i) => h('p', {
+            key: `n${i}`,
+            style: { fontSize: '11px', opacity: 0.55, margin: 0, lineHeight: 1.6 },
+          }, text)),
           h(EntriesView, {
             key: 'entries',
             // 配置里的空间，不是「最后一条记忆的 space」——后者会随写入漂走，
-            // 让「当前空间」随时说谎。旧字段保留给别处用，这里只认配置。
+            // 让「当前空间」说实话。旧字段保留给别处用，这里只认配置。
             currentSpace: memoryStatus?.spaceConfigured ?? memoryStatus?.space ?? 'default',
             spaceSave: save.space,
             onSwitchSpace: (name) => writePath(memoryForm, ['space'], String(name), saveStateFor('space')),
@@ -1829,7 +2042,7 @@ window.__ModuleLoader__.load({
     exports.inject = ['slots']
     /** 纯函数，自检直接调，不用起浏览器。 */
     exports.__test = {
-      pick, writePath, resetPath, normalizeNumber, GROUPS, writeStateOf,
+      pick, writePath, resetPath, normalizeNumber, GROUPS, ZONES, statusChipsOf, writeStateOf,
       // 图谱几何也是纯函数：测试和 scripts/graph-svg.mjs 借这一口直接调，不复制布局代码。
       graphScene: buildGraphScene, graphLabel: glLabel, GL_W, GL_H, CAM_MIN, CAM_MAX, GL_LABEL_ZOOM,
     }

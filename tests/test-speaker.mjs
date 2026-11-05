@@ -196,3 +196,33 @@ test('C1 person 表：名字不设唯一，ARK/梁 两个 spk 同名能共存', 
     assert.equal(row.imp, null)
   } finally { db.close() }
 })
+
+// ---- D. 老库没迁移（没有 spk 列）：写入要退化成不带 spk，而不是整条丢 ----
+
+test('D1 没有 spk 列时 writer 照样落库（降级，不抛）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wm-nospk-'))
+  const db = new DatabaseSync(join(dir, 'memory.db'))
+  try {
+    // 只建最小 schema：刻意不带 spk/imp——模拟插件还没跑过 ensureSpeakerColumns。
+    db.exec(`CREATE TABLE entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, u TEXT NOT NULL, a TEXT NOT NULL,
+      t INTEGER NOT NULL, w REAL NOT NULL DEFAULT 1, emo TEXT NOT NULL DEFAULT '[]',
+      vec BLOB, hot INTEGER NOT NULL DEFAULT 1, owner TEXT NOT NULL DEFAULT '',
+      space TEXT NOT NULL DEFAULT 'default')`)
+    // 写入路径还会抽事实：把 facts 表也建出来，测的才是「缺 spk」这一件事。
+    db.exec(`CREATE TABLE facts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, f TEXT NOT NULL, space TEXT NOT NULL DEFAULT 'default',
+      t INTEGER NOT NULL, valid_from INTEGER NOT NULL DEFAULT 0, valid_until INTEGER)`)
+    const { createWriter } = await import('../lib/writer.mjs')
+    const writer = createWriter({
+      db, bumpStat: () => {}, recentPairs: () => 4, factMax: () => 4,
+      space: () => 'default', speakerOf: () => 'deadbeef',
+    })
+    writer.setUser('这条要落进去')
+    writer.setAssistant('好')
+    await writer.flush()
+    const row = db.prepare('SELECT u, a FROM entries').get()
+    assert.equal(row?.u, '这条要落进去', '缺 spk 列不该让整条记忆消失')
+    assert.equal(row?.a, '好')
+  } finally { db.close() }
+})

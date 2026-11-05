@@ -9,7 +9,7 @@
  * 这一页是给人看的，不是给人改的。
  */
 import assert from 'node:assert/strict'
-import { mkdtempSync, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { mkdtempSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -481,6 +481,55 @@ if (tools.size === 0) {
   assert.equal(st.body.spaceConfigured, 'default', '空间要报配置值，不是最后一条记忆的 space')
   assert.ok('space' in st.body, '旧字段要留着，别破接口')
   console.log('OK 空间隔离')
+}
+
+// ---- 任务栈：开机从 NEXT.md 单向同步（以前只有手动脚本，等于功能默认是死的）----
+{
+  // 在一个新目录里放一份 NEXT.md，再挂一次插件：/status 应报出栈里有几条。
+  const nextDir = mkdtempSync(join(tmpdir(), 'wm-next-'))
+  writeFileSync(join(nextDir, 'NEXT.md'), [
+    '# NEXT',
+    '',
+    '- [ ] 把设置页按「我要干什么」重排',
+    '- [ ] 体检完写一份问题清单',
+    '- [x] 这条已经做完了',
+    '',
+  ].join('\n'))
+  const routes2 = new Map()
+  const effect2 = (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} }
+  const ctx2 = { ...ctx, inject: (deps, cb) => {
+    const stub = { effect: effect2 }
+    if (deps.includes('systemPrompt')) stub.systemPrompt = { section: () => {}, context: () => () => {} }
+    if (deps.includes('llm')) stub.llm = {}
+    if (deps.includes('agents')) stub.agents = { list: () => [] }
+    if (deps.includes('dshIm')) stub.dshIm = {}
+    if (deps.includes('webServer')) stub.webServer = { register: (r) => { routes2.set(`${r.kind}:${r.path}`, r.handler) } }
+    if (deps.includes('tools')) stub.tools = { register: () => {} }
+    cb(stub)
+  } }
+  apply(ctx2, { memoryPath: nextDir, preferencePath: join(nextDir, 'PREFERENCE.md') })
+  const handler = routes2.get('exact:/dsh-whale-memory/status')
+  const res = { status: 0, writeHead(c) { this.status = c; return this }, end(b) {
+    const body = JSON.parse(b)
+    assert.equal(body.taskStack.open, 2, 'NEXT.md 里两条未勾选的应进 task 表')
+    const titles = body.taskStack.top.map((t) => t.title)
+    for (const t of ['把设置页按「我要干什么」重排', '体检完写一份问题清单']) {
+      assert.ok(titles.includes(t), `栈里要有「${t}」`)
+    }
+    assert.equal(body.taskStack.top.length, 2, '两条未完成的都在栈上')
+    assert.equal(body.speaker.migrated, true, '新库 spk 列应该已补上')
+    // 有没有同步取决于「仓库 vs 安装副本」，测试不假定同步状态，只要求字段在那儿且是布尔。
+    assert.ok(body.install && typeof body.install.synced === 'boolean', 'status 要报安装副本是否同步')
+    assert.equal(typeof body.install.running, 'string', '要报运行中的版本号')
+    assert.ok('admit' in body && 'days' in body.admit, '取舍影子统计要跟着 status 出来')
+  } }
+  await handler({ method: 'GET', url: '/dsh-whale-memory/status' }, res)
+  // 再挂一次：幂等，不会重复插
+  apply(ctx2, { memoryPath: nextDir, preferencePath: join(nextDir, 'PREFERENCE.md') })
+  const db2 = new DatabaseSync(join(nextDir, 'memory.db'))
+  assert.equal(db2.prepare("SELECT COUNT(*) c FROM task WHERE status='doing'").get().c, 2, '第二次启动不该重复插入')
+  db2.close()
+  console.log('OK 任务栈开机对齐')
 }
 
 console.log('\n全部通过')

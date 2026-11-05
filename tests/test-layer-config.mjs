@@ -66,8 +66,9 @@ assert.ok(!/startDay: .*\.default\(\d\)/.test(wkSrc), 'weekly.startDay 不能再
 
 // 设置页那边也不许自带 fallback：那是第二份默认值
 const client = read('client.js')
-const layerStart = client.indexOf("title: '自动落盘 / 周记'")
-assert.ok(layerStart > 0, '设置页里应该还有「自动落盘 / 周记」这一组')
+// 这一组在重新分组后叫「落盘与周记」（分区：记忆怎么收）。
+const layerStart = client.indexOf("title: '落盘与周记'")
+assert.ok(layerStart > 0, '设置页里应该还有「落盘与周记」这一组')
 const layerFields = client.slice(layerStart, client.indexOf(']', layerStart))
 assert.ok(!/fallback:/.test(layerFields), '这几项不该再写 fallback——schema 已有 default')
 console.log('OK 默认值只在 LAYER_DEFAULTS')
