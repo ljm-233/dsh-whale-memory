@@ -195,7 +195,7 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
   const coreActions = A.filter((a) => a.tier === 'core')
   assert.ok(fields.length === 40, '一共 40 个设置项（数量不变，只分层）')
   assert.ok(core.length + coreActions.length <= 14, '常用区合计 ≤14 项')
-  assert.equal(core.length + coreActions.length, 11, '常用 11 项（10 个字段 + 备份按钮）')
+  assert.equal(core.length + coreActions.length, 13, '常用 13 项（12 个字段 + 备份按钮）')
   for (const key of ['budgetChars', 'space', 'recentPairs', 'cardDailyMax', 'recallMax',
     'moodEnabled', 'moodInjectDailyMax', 'groupDump.enabled', 'groupDump.intervalMinutes', 'weekly.enabled']) {
     assert.ok(core.some((f) => f.path.join('.') === key), `${key} 应该在常用里`)
@@ -204,7 +204,7 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
   // 高级默认折叠：没点之前，高级里的东西一个都不渲染
   assert.ok(html.includes('高级（3 项）'), '现在区的高级入口')
   assert.ok(html.includes('高级（14 项）'), '记忆怎么收的高级入口')
-  assert.ok(html.includes('高级（9 项）'), '怎么被叫醒的高级入口')
+  assert.ok(html.includes('高级（7 项）'), '怎么被叫醒的高级入口')
   assert.ok(html.includes('高级（6 项）'), '诊断区的高级入口')
   assert.ok(!html.includes('收起高级'), '默认是折叠的')
   for (const hidden of ['打分公式', '自动写日记', '导出目录', '影子模式', '免打扰起点', '心情半衰期', '热区条数上限']) {
@@ -244,13 +244,80 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
   assert.equal((visibleText(html).match(/[?？]/g) ?? []).length, 0, '页面上不能出现「?」')
 }
 
-// ---- 顶部锚点导航 ----
+// ---- 页签：条 / 高亮 / 隐藏而不卸载 / hash 与 localStorage ----
 {
-  const { ZONES: Z } = plugin.__test
-  for (const z of Z) {
-    assert.ok(html.includes(`href="#dsh-whale-memory-zone-${z.id}"`), `${z.title} 的锚点链接`)
-    assert.ok(html.includes(`id="dsh-whale-memory-zone-${z.id}"`), `${z.title} 的锚点目标`)
+  const { ZONES: Z, TAB_KEY, parseTabHash, tabOf } = plugin.__test
+
+  // 1) 键名与 slug 是写死的契约：改了就换一条书签，得让测试叫一声。
+  assert.equal(TAB_KEY, 'whale-memory.settings.tab', 'localStorage 的键名')
+  assert.deepEqual(Z.map((z) => z.slug), ['mood', 'memory', 'wake', 'diag'], '四条页签的 hash 名字，按顺序')
+
+  // 2) 页签条：四个名字按顺序、每个都是 role="tab"。
+  const barStart = html.indexOf('role="tablist"')
+  assert.ok(barStart > 0, '页签条要有 role="tablist"')
+  const barHtml = html.slice(barStart, html.indexOf('</div>', barStart))
+  assert.deepEqual([
+    ...barHtml.matchAll(/role="tab"[^>]*>([^<]+)</g),
+  ].map((m) => m[1]), ['它现在怎么想我', '记忆怎么收', '怎么被叫醒', '危险与诊断'], '页签条四个名字按顺序')
+  assert.ok(/id="dsh-whale-memory-tab-mood"[^>]*aria-selected="true"/.test(html), '默认停在第一页（mood 高亮）')
+  assert.equal((html.match(/aria-selected="true"/g) ?? []).length, 1, '只有一条页签是高亮的')
+  assert.equal((html.match(/tabindex="0"/g) ?? []).length, 1, '只有当前页签进 Tab 序列（其余 tabindex=-1）')
+  assert.equal((html.match(/tabindex="-1"/g) ?? []).length, 3, '其余三条页签 tabindex=-1')
+
+  // 3) 四页都渲染，只给非当前页加 hidden——卸载会把没保存的草稿丢掉。
+  const panels = {}
+  for (const m of html.matchAll(/<section\b[^>]*>/g)) {
+    const slug = /id="dsh-whale-memory-panel-([a-z]+)"/.exec(m[0])?.[1]
+    if (slug === undefined) continue
+    assert.ok(m[0].includes('role="tabpanel"'), `${slug} 面板带 role="tabpanel"`)
+    assert.ok(m[0].includes(`aria-labelledby="dsh-whale-memory-tab-${slug}"`), `${slug} 面板指向自己的页签`)
+    panels[slug] = { html: html.slice(m.index + m[0].length, html.indexOf('</section>', m.index)), hidden: /\shidden(=""|\s|>)/.test(m[0]) }
   }
+  assert.deepEqual(Object.keys(panels), ['mood', 'memory', 'wake', 'diag'], '四页都在 DOM 里')
+  assert.equal(panels.mood.hidden, false, '当前页不 hidden')
+  for (const slug of ['memory', 'wake', 'diag']) assert.equal(panels[slug].hidden, true, `${slug} 是隐藏而不是没渲染`)
+
+  // 4) 隐藏页里的控件照样在——切回来时草稿还在。
+  assert.ok(panels.memory.html.includes('注入字符上限'), '隐藏的页里控件仍在（只隐藏不卸载）')
+  // 这一套假件里 fetch 一律失败，所以预览走「读不到状态」那一支——文案换，位置不变。
+  assert.ok(panels.mood.html.includes('下面是配置项'), '第一页有只读预览')
+  assert.ok(panels.diag.html.includes('下面是配置项'), '诊断页有自己那条计数（spk 覆盖率，读不到时写读不到）')
+
+  // 5) 状态条只在第一页：其余页一个「今日注入」都不许有。
+  assert.ok(panels.mood.html.includes('今日注入'), '状态条在第一页顶部')
+  for (const slug of ['memory', 'wake', 'diag']) {
+    assert.ok(!panels[slug].html.includes('今日注入'), `${slug} 页不重复状态条`)
+  }
+
+  // 6) hash 与 localStorage 都是纯函数：四条 slug、区 id 别名、脏数据。
+  assert.equal(parseTabHash('#tab=mood'), 'now')
+  assert.equal(parseTabHash('#tab=memory'), 'intake')
+  assert.equal(parseTabHash('#tab=wake'), 'wake')
+  assert.equal(parseTabHash('#tab=diag'), 'diag')
+  assert.equal(parseTabHash('#tab=intake'), 'intake', '老书签用区 id 也认')
+  assert.equal(parseTabHash('#tab=memory&x=1'), 'intake', '带别的参数也认')
+  assert.equal(parseTabHash('tab=wake'), 'wake', '不带 # 也认')
+  assert.equal(parseTabHash('#nope'), undefined, '认不出返回 undefined（不抛）')
+  assert.equal(parseTabHash(''), undefined)
+  assert.equal(parseTabHash(undefined), undefined)
+  assert.equal(tabOf('mood'), 'now', 'slug → 区 id')
+  assert.equal(tabOf('DIAG'), 'diag', '大小写不敏感')
+  assert.equal(tabOf(undefined), 'now', '认不出回第一页')
+  assert.equal(tabOf('乱写'), 'now', '脏数据回第一页')
+
+  // 7) 每页的常用/高级项数（页签不搬字段，只分页）。
+  const countOf = (zoneId) => {
+    const fields = plugin.__test.GROUPS.filter((g) => (g.zone ?? 'intake') === zoneId).flatMap((g) => g.fields)
+    const core = fields.filter((f) => f.tier === 'core').length
+      + (zoneId === 'diag' ? plugin.__test.ACTIONS.filter((a) => a.tier === 'core').length : 0)
+    const adv = fields.length - fields.filter((f) => f.tier === 'core').length
+      + (zoneId === 'diag' ? plugin.__test.ACTIONS.filter((a) => a.tier === 'adv').length : 0)
+    return { core, adv }
+  }
+  assert.deepEqual(Z.map((z) => countOf(z.id)), [
+    { core: 2, adv: 3 }, { core: 8, adv: 14 }, { core: 2, adv: 7 }, { core: 1, adv: 6 },
+  ], '四页的常用/高级项数')
+  assert.ok(Z.every((z) => countOf(z.id).core <= 14), '每页常用 ≤14 项')
 }
 
 // ---- 记忆内容只读 + 只读态要说清怎么改 ----

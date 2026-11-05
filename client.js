@@ -64,34 +64,79 @@ window.__ModuleLoader__.load({
      *   3. `desc` 一行、≤25 字；更长的解释进 `long`（渲染成 title 悬停）。
      *      组标题下最多一句话（≤30 字）。
      *
+     * 同一版再往前一步：四个区 → 四条页签（见下面 TAB_KEY）。
+     *
+     *   1. 页签条吸顶，当前页签高亮；点 / ←→ 切页，不刷新。
+     *   2. 四页**全部渲染、只隐藏**（`hidden`）——未保存的输入是 Row 的组件状态，
+     *      卸载就丢；隐藏还能让「切回来」是瞬时的。见 renderZone。
+     *   3. 状态条只在第一页顶部（其余页各有一条自己的计数，例如诊断页的 spk 覆盖率）。
+     *
      * 默认值不在这里写——渲染时从表单快照的 `base` 层取，少一处副本就少一处说谎的地方。
      */
     const ZONES = [
       {
         id: 'now',
+        slug: 'mood',
         title: '它现在怎么想我',
         hint: '一眼看现状，下面几道闸管心情。',
         long: '上面是只读预览（这一轮会带什么进上下文）；下面是它说自己心情的几道闸，改了下一轮就生效。',
       },
       {
         id: 'intake',
+        slug: 'memory',
         title: '记忆怎么收',
         hint: '收什么、留多少、落到哪。',
         long: '改完下一轮生效，不用重启；数字越小越省 token。',
       },
       {
         id: 'wake',
+        slug: 'wake',
         title: '怎么被叫醒',
         hint: '什么时候自己开口、什么时候闭嘴。',
         long: '这几项管的是「它会不会主动出现」，不碰记忆本体的写入。',
       },
       {
         id: 'diag',
+        slug: 'diag',
         title: '危险与诊断',
         hint: '平时不用动；按钮会动真数据。',
         long: '公式与调试开关在高级里（正常用不着）；按钮那一栏点之前会再问一次。',
       },
     ]
+
+    /**
+     * 页签：一个区就是一页，四个区四条页签。
+     *
+     *   地址栏  `#tab=<slug>`（mood / memory / wake / diag）——分享给别人打开落在同一页
+     *   本地    localStorage[`whale-memory.settings.tab`] 存区 id（now / intake / wake / diag）
+     *
+     * 两处都认不出时回第一页，不报错：脏书签不该把设置页搞成空白。
+     */
+    const TAB_KEY = 'whale-memory.settings.tab'
+
+    /**
+     * 从一段 hash 里认页签。
+     *
+     * 认 `#tab=memory`、`#tab=memory&x=1`、`tab=memory`；slug 与区 id 都收
+     * （`#tab=intake` 也认，老书签不至于失效）。
+     *
+     * @param {string} hash 地址栏 hash（带不带 # 都行）
+     * @returns {string|undefined} 区 id；认不出返回 undefined
+     */
+    const parseTabHash = (hash) => {
+      const m = /(?:^|[#&?])tab=([a-z0-9_-]+)/i.exec(String(hash ?? ''))
+      if (m === null) return undefined
+      const key = m[1].toLowerCase()
+      const hit = ZONES.find((z) => z.slug === key || z.id === key)
+      return hit === undefined ? undefined : hit.id
+    }
+
+    /** 任意输入（区 id / slug / 空 / 脏数据）→ 合法区 id，认不出回第一页。 */
+    const tabOf = (raw) => {
+      const key = String(raw ?? '').trim().toLowerCase()
+      const hit = ZONES.find((z) => z.slug === key || z.id === key)
+      return hit === undefined ? ZONES[0].id : hit.id
+    }
 
     const GROUPS = [
       // ───────────── 它现在怎么想我（唯一可写的一组：情绪记账） ─────────────
@@ -232,11 +277,13 @@ window.__ModuleLoader__.load({
         hint: '它自己判断该不该开口。',
         long: '三个门槛一起决定它会不会主动出现：日上限、冷却、以及多久没说话才算安静。',
         fields: [
-          { tier: 'adv', path: ['dailyCap'], label: '每天最多发几条（条）', kind: 'int', min: 0, max: 500, desc: '0 = 完全不主动开口',
+          // 这一页原来 9 项全在高级里：分页之后「打开这一页什么都没有」，
+          // 所以把真会改的两项（日上限、多久算安静）抬到常用，其余仍在高级。
+          { tier: 'core', path: ['dailyCap'], label: '每天最多发几条（条）', kind: 'int', min: 0, max: 500, desc: '0 = 完全不主动开口',
             long: '主动消息的日上限；0 = 完全不主动开口。' },
           { tier: 'adv', path: ['cooldownHours'], label: '两次之间至少隔（小时）', kind: 'num', min: 0, max: 720, step: 1, desc: '刚说过就不补一句',
             long: '刚说过话就不再补一句。' },
-          { tier: 'adv', path: ['silenceHours'], label: '多久没说话算安静（小时）', kind: 'num', min: 0, max: 720, step: 1, desc: '安静到这才有理由开口',
+          { tier: 'core', path: ['silenceHours'], label: '多久没说话算安静（小时）', kind: 'num', min: 0, max: 720, step: 1, desc: '安静到这才有理由开口',
             long: '安静到这个程度才有理由主动开口。' },
         ],
       },
@@ -1693,7 +1740,9 @@ window.__ModuleLoader__.load({
         })()
 
         return h(
-          'section',
+          // 用 div 不用 section：这块现在挂在「它现在怎么想我」那条 tabpanel 里头，
+          // `<section>` 套 `<section>` 让「哪块是这一页」变得要数深度，不值当。
+          'div',
           { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
           h('h3', { style: { fontSize: '13px', margin: '0 0 2px' } }, '记忆内容'),
           h(
@@ -1839,6 +1888,64 @@ window.__ModuleLoader__.load({
         const [save, setSave] = React.useState({})
         const saveStateFor = (key) => (state) => setSave((prev) => ({ ...prev, [key]: state }))
 
+        /**
+         * 当前页签（区 id）。开局三处按优先级认一遍：
+         *   1. 地址栏 `#tab=<slug>`——别人分享来的链接说了算
+         *   2. localStorage 上一次停的那一页
+         *   3. 第一页
+         * 服务端渲染（测试）里 window 没有 location/localStorage，全走兜底，不抛。
+         */
+        const [tab, setTab] = React.useState(() => tabOf(
+          (() => {
+            try { return parseTabHash(window.location.hash) } catch { return undefined }
+          })()
+          ?? (() => {
+            try { return window.localStorage.getItem(TAB_KEY) } catch { return undefined }
+          })(),
+        ))
+
+        // 页签变了：记进 localStorage，并把地址栏写成 `#tab=<slug>`。
+        // 用 replaceState 而不是改 location.hash——后者会去找同名锚点、把页面滚走。
+        React.useEffect(() => {
+          const zone = ZONES.find((z) => z.id === tab) ?? ZONES[0]
+          try { window.localStorage.setItem(TAB_KEY, zone.id) } catch { /* 隐私模式没有 localStorage */ }
+          const want = `#tab=${zone.slug}`
+          try {
+            if (window.location.hash !== want) window.history.replaceState(null, '', want)
+          } catch {
+            try { window.location.hash = want } catch { /* 没有 history 就算了，页签照样能切 */ }
+          }
+        }, [tab])
+
+        // 手工改地址栏 / 点开另一条分享链接：hashchange 跟过去。
+        React.useEffect(() => {
+          const onHash = () => {
+            const next = parseTabHash(window.location.hash)
+            if (next !== undefined) setTab(next)
+          }
+          window.addEventListener('hashchange', onHash)
+          return () => window.removeEventListener('hashchange', onHash)
+        }, [])
+
+        // 键盘 ←/→ 切页签。正在输入框/下拉里敲字时不抢键。
+        React.useEffect(() => {
+          const onKey = (ev) => {
+            if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return
+            if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return
+            const el = ev.target
+            const tag = String(el?.tagName ?? '').toUpperCase()
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable === true) return
+            ev.preventDefault()
+            setTab((prev) => {
+              const i = ZONES.findIndex((z) => z.id === prev)
+              const step = ev.key === 'ArrowRight' ? 1 : -1
+              return ZONES[(((i < 0 ? 0 : i) + step) + ZONES.length) % ZONES.length].id
+            })
+          }
+          window.addEventListener('keydown', onKey)
+          return () => window.removeEventListener('keydown', onKey)
+        }, [])
+
         React.useEffect(() => {
           let alive = true
           const load = (url, setter) => {
@@ -1940,6 +2047,24 @@ window.__ModuleLoader__.load({
               padding: '10px 12px', background: 'rgba(128,128,128,0.04)', marginTop: '2px',
             },
           }, ...rows.map(([k, v]) => previewLine(k, v)))
+        })()
+
+        /**
+         * 诊断页自己的那条计数：状态条只在第一页，所以「这张脸对不对」的事
+         * 跟着诊断走——不折叠、不用点开高级才看得见。
+         */
+        const diagCounter = (() => {
+          if (memoryStatus === null) {
+            return h('p', { style: { fontSize: '11px', opacity: 0.55, margin: '0 0 2px' } }, '读不到状态（/status 没回），下面是配置项。')
+          }
+          const sp = memoryStatus.speaker ?? {}
+          const text = sp.migrated === false
+            ? '说话人：库还没迁移（spk 列不存在）'
+            : `说话人覆盖 ${sp.covered ?? 0} / ${sp.total ?? 0} 条 · ${Math.round(Number(sp.ratio ?? 0) * 1000) / 10}%`
+          return h('p', {
+            style: { fontSize: '11px', opacity: 0.6, margin: '0 0 2px', lineHeight: 1.6 },
+            title: '每条记忆有没有记下「谁说的」；只统计，不影响任何写入。',
+          }, text)
         })()
 
         /** 一行配置。只读时控件灰掉，页首另有一句话说明为什么要手改文件。 */
@@ -2065,30 +2190,69 @@ window.__ModuleLoader__.load({
           footNotes.push(`主动消息：${proactiveStatus.isQuietHours ? '免打扰中' : '可发'} · 今天 ${proactiveStatus.state?.dailyCount?.[localDayKey()] ?? 0} 条 · ${lastSentAt ? `上次开口 ${fmtTime(Number(lastSentAt))}` : '还没跑过'}`)
         }
 
-        // 顶部锚点导航：四个区的名字，点了跳过去（纯 #id，不用 JS）。
-        const zoneAnchor = (id) => `${NS}-zone-${id}`
-        const nav = h('nav', {
-          style: { display: 'flex', gap: '6px', flexWrap: 'wrap', margin: '2px 0 0' },
-        },
-        ...ZONES.map((zone) => h('a', {
-          key: zone.id,
-          href: `#${zoneAnchor(zone.id)}`,
-          title: zone.long,
+        /**
+         * 页签条：吸顶、当前页签高亮、点一下切。
+         *
+         * 吸顶用的是半透明灰 + `backdrop-filter`，不写死主题色——浅色深色都
+         * 只略微提亮一层，滚过去的内容被糊掉，名字始终读得清。
+         */
+        const tabbar = h('div', {
+          role: 'tablist',
+          'aria-label': '设置分类',
           style: {
-            fontSize: '11px', padding: '2px 10px', borderRadius: '999px',
-            border: '1px solid rgba(128,128,128,0.28)', color: 'inherit',
-            textDecoration: 'none', opacity: 0.7, whiteSpace: 'nowrap',
+            position: 'sticky',
+            top: 0,
+            zIndex: 3,
+            display: 'flex',
+            gap: '6px',
+            flexWrap: 'wrap',
+            margin: '0 0 4px',
+            padding: '6px 0',
+            background: 'rgba(128,128,128,0.10)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            borderBottom: '1px solid rgba(128,128,128,0.18)',
           },
-        }, zone.title)),
-        )
+        },
+        ...ZONES.map((zone) => {
+          const active = zone.id === tab
+          return h('button', {
+            key: zone.id,
+            type: 'button',
+            role: 'tab',
+            id: `${NS}-tab-${zone.slug}`,
+            'aria-selected': active ? 'true' : 'false',
+            'aria-controls': `${NS}-panel-${zone.slug}`,
+            // 只有当前页签进 Tab 序列：一次 Tab 就到页签条，←→ 在条内移动。
+            tabIndex: active ? 0 : -1,
+            title: zone.long,
+            onClick: () => setTab(zone.id),
+            style: {
+              ...pillStyle,
+              fontWeight: active ? 600 : 400,
+              opacity: active ? 1 : 0.6,
+              background: active ? 'rgba(128,128,128,0.22)' : 'transparent',
+              borderColor: active ? 'rgba(128,128,128,0.62)' : 'rgba(128,128,128,0.28)',
+              whiteSpace: 'nowrap',
+            },
+          }, zone.title)
+        }))
+
+        /** 一个区的地址（页签面板 id 与分享用的 hash 都由它派生）。 */
+        const panelId = (zone) => `${NS}-panel-${zone.slug}`
 
         /**
-         * 一个区：常用项直接摊开，其余收进「高级（N 项）」折叠。
+         * 一个区（= 一页）：常用项直接摊开，其余收进「高级（N 项）」折叠。
          *
          * 常用 = `tier: 'core'`（全页合计 ≤14 项，选的是最可能被改的那几项）；
          * 高级 = 其余全部，默认折叠。折叠是每个区各一个，不串台。
+         *
+         * 非当前页**照样渲染，只加 `hidden`**：未保存的输入是 Row 自己的组件
+         * 状态（草稿 + 「正在敲」标记），一卸载就回到旧值——切页丢字比切页慢
+         * 更不能接受；`hidden` 还顺手把它移出无障碍树，屏幕阅读器只读当前页。
          */
         const renderZone = (zone) => {
+          const active = zone.id === tab
           const groups = available.filter((g) => (g.zone ?? 'intake') === zone.id)
           const coreFields = []
           const advFields = []
@@ -2103,9 +2267,23 @@ window.__ModuleLoader__.load({
           const open = advOpen[zone.id] === true
 
           const coreBody = []
+          // 状态条挂在第一页顶部，不往下每页重复一遍。
+          if (zone.id === ZONES[0].id) coreBody.push(statusBar)
           if (zone.id === 'now') coreBody.push(nowView)
+          if (zone.id === 'diag') coreBody.push(diagCounter)
           for (const item of coreFields) coreBody.push(renderFieldRow(item.group, item.field))
           for (const action of coreActions) coreBody.push(renderActionRow(action))
+          // 记忆内容（热区/冷区/场景/画像/图谱）是「现状」，跟着第一页走。
+          if (zone.id === ZONES[0].id) {
+            coreBody.push(h(EntriesView, {
+              key: 'entries',
+              // 配置里的空间，不是「最后一条记忆的 space」——后者会随写入漂走，
+              // 让「当前空间」说实话。旧字段保留给别处用，这里只认配置。
+              currentSpace: memoryStatus?.spaceConfigured ?? memoryStatus?.space ?? 'default',
+              spaceSave: save.space,
+              onSwitchSpace: (name) => writePath(memoryForm, ['space'], String(name), saveStateFor('space')),
+            }))
+          }
 
           const advBody = []
           if (open) {
@@ -2126,8 +2304,18 @@ window.__ModuleLoader__.load({
           if (coreBody.length === 0 && advCount === 0) return null
           return h('section', {
             key: zone.id,
-            id: zoneAnchor(zone.id),
-            style: { display: 'flex', flexDirection: 'column', gap: '2px', scrollMarginTop: '8px' },
+            id: panelId(zone),
+            role: 'tabpanel',
+            'aria-labelledby': `${NS}-tab-${zone.slug}`,
+            hidden: !active,
+            style: {
+              // hidden 属性对上样式表里的 display 是不保证赢的（UA 的 [hidden]
+              // 打不过行内 display），所以两边一起写：语义靠 hidden，视觉靠 display。
+              display: active ? 'flex' : 'none',
+              flexDirection: 'column',
+              gap: '2px',
+              scrollMarginTop: '44px',
+            },
           },
           h('h2', {
             style: { fontSize: '14px', margin: '0 0 1px', fontWeight: 600 },
@@ -2156,7 +2344,7 @@ window.__ModuleLoader__.load({
 
         return h(
           'div',
-          { style: { display: 'flex', flexDirection: 'column', gap: '12px', padding: '6px 0 10px' } },
+          { style: { display: 'flex', flexDirection: 'column', gap: '10px', padding: '6px 0 10px' } },
           h('header', {
             style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' },
           },
@@ -2167,8 +2355,7 @@ window.__ModuleLoader__.load({
             style: { ...pillStyle, opacity: 0.75 },
           }, '刷新'),
           ),
-          nav,
-          statusBar,
+          tabbar,
           // 只读态不是「控件灰了」就完事：说清为什么灰、要改该动哪个文件。
           snaps.memory.writable || available.every((g) => g.form !== 'memory')
             ? null
@@ -2180,14 +2367,6 @@ window.__ModuleLoader__.load({
             key: `n${i}`,
             style: { fontSize: '11px', opacity: 0.55, margin: 0, lineHeight: 1.6 },
           }, text)),
-          h(EntriesView, {
-            key: 'entries',
-            // 配置里的空间，不是「最后一条记忆的 space」——后者会随写入漂走，
-            // 让「当前空间」说实话。旧字段保留给别处用，这里只认配置。
-            currentSpace: memoryStatus?.spaceConfigured ?? memoryStatus?.space ?? 'default',
-            spaceSave: save.space,
-            onSwitchSpace: (name) => writePath(memoryForm, ['space'], String(name), saveStateFor('space')),
-          }),
         )
       }
 
@@ -2207,6 +2386,8 @@ window.__ModuleLoader__.load({
     /** 纯函数，自检直接调，不用起浏览器。 */
     exports.__test = {
       pick, writePath, resetPath, normalizeNumber, GROUPS, ZONES, ACTIONS, statusChipsOf, writeStateOf,
+      // 页签：地址栏/localStorage 两条路子都是纯函数，测试里直接调，不用起浏览器。
+      TAB_KEY, parseTabHash, tabOf,
       // 图谱几何也是纯函数：测试和 scripts/graph-svg.mjs 借这一口直接调，不复制布局代码。
       graphScene: buildGraphScene, graphLabel: glLabel, GL_W, GL_H, CAM_MIN, CAM_MAX, GL_LABEL_ZOOM,
     }
