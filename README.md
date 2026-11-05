@@ -1,6 +1,6 @@
 # dsh-whale-memory
 
-给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的长期记忆插件。当前版本 **0.28.14**。
+给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的长期记忆插件。版本号只写在 `package.json`（`lib/constants.mjs` 读回来，`GET /dsh-whale-memory/status` 里看得到）。
 
 它不指望「用户提到线索才去检索」。每轮它会自己拼一张小卡递给模型：我是谁、上次做到哪、今天写的日记、仍然成立的关于主人的事实、最近几轮、以及「和这次有关、你可能想起来」的几条。要深挖，另有一个工具按需回捞，读的是原文。
 
@@ -47,17 +47,31 @@ node scripts/check-all.mjs
 | `verify-install.mjs` | 仓库 vs 安装副本一致性检查 |
 | `export-memory.mjs` | 把记忆导出成可读文本 |
 | `check-all.mjs` | 语法、未定义名、安装一致性、测试一把跑 |
+| `dump-group.mjs` | 第二层：群聊增量导成 `全量-YYYY-MM-DD.md`（游标 `logs/.last-id`，重复跑不重复写；`--config <file>` 换一份配置） |
+| `weekly-digest.mjs` | 第三层：拢一份周记到 `diary/周记-YYYY-Www.md`（只统计，不调 LLM；`--base <miyu 根>` 换目录） |
 | `protect.sh` | 装完自动校验，失败 exit 1 |
+
+`dump-group.mjs` 与 `weekly-digest.mjs` 之间的时间工具（东八区换算、`dateKey`、`flagValue`）在 `scripts/_localtime.mjs` 里，别再各抄一份。
 
 ## 设置页
 
-「鲸娘记忆」下面几组：冷热分层（热区条数上限 / 抬进热区的最低权重 / 层级惩罚）、记忆注入预算、联想开关。都是 volatile，改完下一轮生效。
+「鲸娘记忆」下面八组：记忆注入（预算 / 热区轮数 / 事实条数）、主动联想（条数 / 门槛 / 权重上限）、冷热分层（热区条数上限 / 抬进热区的最低权重 / 层级惩罚）、记忆空间、夜班 / 桌面页、日记、压缩存档、自动落盘 / 周记。除了 `memoryPath`（记忆库路径，改了要重启），都是 volatile，改完下一次读配置就生效。
+
+「自动落盘 / 周记」那五项就是第二、三层脚本的开关与参数：
+
+- `groupDump.enabled`（自动落盘）、`groupDump.dir`（导出目录，默认 `~/.dsh/miyu/logs`）——脚本下次启动就读到；
+- `groupDump.intervalMinutes`（落盘间隔，1–1440）——**只影响渲染出来的 systemd timer**，改完要重跑 `node scripts/install-local.mjs --with-group-dump` 才换掉间隔；
+- `weekly.enabled`（周记）、`weekly.startDay`（一周从周几算，1=周一 … 7=周日）。
+
+这几项的默认值只有一份：`lib/dump-config.mjs` 的 `LAYER_DEFAULTS`。
 
 ## 环境
 
 - Node 22+
 - 本地嵌入服务：`http://127.0.0.1:8377`（BGE，512 维）。`embed_server.py` 自带一个；没有也不致命，只是向量那一路退化成关键词。
-- SQLite 库默认在 `~/.dsh/miyu/db/memory.db`，路径可配。
+- SQLite 库默认在 `~/.dsh/whale-memory/memory.db`（`lib/constants.mjs` 的 `DEFAULT_MEMORY_DIR`），路径可用 `memoryPath` 改。
+
+  ⚠️ 本机（妹妹那台）它是软链：`~/.dsh/whale-memory/memory.db` → `../../db/memory.db`，真文件落在 `~/.dsh/db/`。同一层还有四个同样的软链：`backups/`、`HANDOVER.md`、`pinned.md`、`memory.json`。**这是脆弱点**：重建记忆目录、换机器、从备份还原时先 `ls -l ~/.dsh/whale-memory/` 看清指向——软链断了不会报错，插件会对着一个新库重新建，旧账看着就像「没记过」。
 
 ## 目录
 

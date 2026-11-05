@@ -20,17 +20,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { loadLayerConfig } from '../lib/dump-config.mjs'
-
-const TZ_OFFSET_MS = 8 * 60 * 60 * 1000
-const p2 = (n) => String(n).padStart(2, '0')
-const shifted = (ms) => new Date(ms + TZ_OFFSET_MS)
-const dateKey = (d) => `${d.getUTCFullYear()}-${p2(d.getUTCMonth() + 1)}-${p2(d.getUTCDate())}`
+import { dateKey, flagValue, p2, shifted } from './_localtime.mjs'
 
 const argv = process.argv.slice(2)
-const flagValue = (name) => {
-  const i = argv.indexOf(name)
-  return i >= 0 ? (argv[i + 1] ?? '') : ''
-}
 
 if (argv.includes('--help') || argv.includes('-h')) {
   console.log('用法: node scripts/weekly-digest.mjs [--week YYYY-Www] [--base <miyu 根>] [--config <file.json>]')
@@ -95,7 +87,8 @@ function main() {
   for (let i = 0; i < 7; i++) {
     const d = new Date(start)
     d.setUTCDate(start.getUTCDate() + i)
-    days.push(dateKey(d))
+    // d 是「东八区日期」的 UTC 零点，交给 dateKey 再挪 +08:00，日历日不变
+    days.push(dateKey(d.getTime()))
   }
   const from = days[0]
   const to = days[6]

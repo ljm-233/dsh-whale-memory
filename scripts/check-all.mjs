@@ -20,6 +20,7 @@ const steps = [
   ['主插件 selfcheck', ['node', [join(root, 'tests', 'test-selfcheck.mjs')]]],
   ['主插件 端点', ['node', [join(root, 'tests', 'test-routes.mjs')]]],
   ['主插件 设置页', ['node', [join(root, 'tests', 'test-client.mjs')]]],
+  ['主插件 分层配置', ['node', [join(root, 'tests', 'test-layer-config.mjs')]]],
   ['新模块 看门狗', ['node', [join(root, 'tests', 'test-new-modules.mjs')]]],
   ['语料 selfcheck', ['node', [join(root, 'corpus', 'test-selfcheck.mjs')]]],
   ['语料 工具', ['node', [join(root, 'corpus', 'test-tool.mjs')]]],

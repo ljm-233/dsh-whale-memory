@@ -22,30 +22,14 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { loadLayerConfig } from '../lib/dump-config.mjs'
-
-const TZ_OFFSET_MS = 8 * 60 * 60 * 1000 // Asia/Shanghai，无夏令时
+import { TZ_OFFSET_MS, dateKey, flagValue, shifted, timeKey } from './_localtime.mjs'
 
 const argv = process.argv.slice(2)
-const flagValue = (name) => {
-  const i = argv.indexOf(name)
-  return i >= 0 ? (argv[i + 1] ?? '') : ''
-}
 
 if (argv.includes('--help') || argv.includes('-h')) {
   console.log('用法: node scripts/dump-group.mjs [--config <file.json>]')
   console.log('  配置来自设置页（groupDump.*），或 profile 的 cordis.patch.yml，或内置默认值')
   process.exit(0)
-}
-
-const p2 = (n) => String(n).padStart(2, '0')
-const shifted = (ms) => new Date(ms + TZ_OFFSET_MS)
-const dateKey = (ms) => {
-  const d = shifted(ms)
-  return `${d.getUTCFullYear()}-${p2(d.getUTCMonth() + 1)}-${p2(d.getUTCDate())}`
-}
-const timeKey = (ms) => {
-  const d = shifted(ms)
-  return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}:${p2(d.getUTCSeconds())}`
 }
 
 /** 正文里换行压成 ↵，空正文写（空）。 */

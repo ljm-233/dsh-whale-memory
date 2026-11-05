@@ -58,11 +58,24 @@ const childHome = (homeProbe.stdout ?? '').trim()
 const homeOk = childHome === fakeHome
 step('子进程 homedir 已切到临时目录', homeOk, homeOk ? '' : `实际 ${childHome}（Windows 上属正常差异）`)
 
-// 3) 版本号：package.json 与 constants 一致
+// 3) 版本号：只有 package.json 一处。真加载模块，看它报出来的版本；
+//    再对一下安装副本（存在时）——副本没同步就是「改了不生效」那类事故的来源。
 const pkg = JSON.parse(readFileSync(join(copy, 'package.json'), 'utf8'))
-const consts = readFileSync(join(copy, 'lib', 'constants.mjs'), 'utf8')
-const constVer = consts.match(/PLUGIN_VERSION\s*=\s*'([^']+)'/u)?.[1]
-step('版本号一致', pkg.version === constVer, `${pkg.version} vs ${constVer}`)
+const verProbe = spawnSync(process.execPath, ['--input-type=module', '-e',
+  `const { PLUGIN_VERSION } = await import(${JSON.stringify(pathToFileURL(join(copy, 'lib', 'constants.mjs')).href)}); console.log(PLUGIN_VERSION)`],
+{ cwd: copy, env: fakeEnv(), encoding: 'utf8' })
+const reported = (verProbe.stdout ?? '').trim()
+step('版本号只来自 package.json', reported === pkg.version,
+  `${pkg.version} vs ${reported || (verProbe.stderr ?? '').trim().split('\n').pop()}`)
+
+const installedPkg = join(process.env.DSH_PROFILE_DIR ?? join(homedir(), '.dsh', 'profiles', 'web'),
+  'node_modules', 'dsh-whale-memory', 'package.json')
+if (existsSync(installedPkg)) {
+  const instVer = JSON.parse(readFileSync(installedPkg, 'utf8')).version
+  step('安装副本版本一致', instVer === pkg.version, `${pkg.version} vs ${instVer}`)
+} else {
+  console.log('  --  这台机器上没有安装副本，跳过版本比对')
+}
 
 // 4) 加载主模块（在副本里，不碰本机数据）
 const load = spawnSync(process.execPath, ['--input-type=module', '-e',

@@ -119,11 +119,11 @@ window.__ModuleLoader__.load({
         title: '自动落盘 / 周记',
         hint: '第二层把群聊按天落成「全量-YYYY-MM-DD.md」，第三层每周拢一份周记。改完下一轮脚本就按这里跑。',
         fields: [
-          { path: ['groupDump', 'enabled'], label: '自动落盘', kind: 'bool', fallback: true },
-          { path: ['groupDump', 'intervalMinutes'], label: '落盘间隔（分钟）', kind: 'int', min: 1, max: 1440, fallback: 10 },
-          { path: ['weekly', 'enabled'], label: '周记', kind: 'bool', fallback: true },
-          { path: ['weekly', 'startDay'], label: '周记起始日（1=周一 … 7=周日）', kind: 'int', min: 1, max: 7, fallback: 1 },
-          { path: ['groupDump', 'dir'], label: '导出目录', kind: 'string', fallback: '~/.dsh/miyu/logs' },
+          { path: ['groupDump', 'enabled'], label: '自动落盘', kind: 'bool' },
+          { path: ['groupDump', 'intervalMinutes'], label: '落盘间隔（分钟）', kind: 'int', min: 1, max: 1440 },
+          { path: ['weekly', 'enabled'], label: '周记', kind: 'bool' },
+          { path: ['weekly', 'startDay'], label: '周记起始日（1=周一 … 7=周日）', kind: 'int', min: 1, max: 7 },
+          { path: ['groupDump', 'dir'], label: '导出目录', kind: 'string' },
         ],
       },
       {

@@ -47,12 +47,17 @@
   - `node scripts/memory-tidy.mjs` 补向量、抬/压热区（会先强制备份）
   - `node ruminate.js` 定期联想
   - `node scripts/export-memory.mjs` 导出人读副本
-  - `node scripts/backup`（`lib/backup.mjs`，夜班每 6 小时检查一次）
+  - 备份：`lib/backup.mjs`（`VACUUM INTO` + 当场校验 + 轮转），**没有单独的命令行**——
+    插件内每 6 小时自查一次要不要备，`node scripts/memory-tidy.mjs` 真跑之前也会强制备一份；
+    想立刻备一份：`curl -X POST http://127.0.0.1:3080/dsh-whale-memory/backups`（同地址 GET 看现有几份、放在哪）
 
 ## 设置项（设置页「鲸娘记忆 → 自动落盘 / 周记」）
 
 脚本和设置页读同一份配置：`scripts/dump-group.mjs` 与 `scripts/weekly-digest.mjs` 都调
-`lib/dump-config.mjs` 的 `loadLayerConfig()`，**默认值只写在那一个文件里**（`LAYER_DEFAULTS`）。
+`lib/dump-config.mjs` 的 `loadLayerConfig()`。**默认值只有一处**：`LAYER_DEFAULTS`（同在 `lib/dump-config.mjs`）。
+设置页那一侧不再自带第二份——`lib/index.mjs` 的 zod schema 写的是 `.default(LAYER_DEFAULTS.*)`，
+`client.js` 的表单里这几项没有 `fallback`（值全由 schema 给），所以「设置页显示的默认值」「脚本读到的默认值」
+「渲染 timer 用的默认值」不可能各说各话。
 
 | 键名 | 控件 | 默认值 | 说明 |
 | --- | --- | --- | --- |
