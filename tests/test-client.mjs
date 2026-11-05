@@ -188,10 +188,19 @@ assert.equal(GROUPS.length, 10)
 assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 8, '记忆八组（新增「情绪记账」，仍不含「记忆空间」单行卡）')
 assert.ok(GROUPS[0].fields.some((f) => f.path.join('.') === 'space'), '空间字段落在记忆注入这组')
 assert.equal(GROUPS.filter((g) => g.form === 'proactive').length, 2, '主动消息两组')
-assert.equal(GROUPS.flatMap((g) => g.fields).length, 35, '一共 35 个设置项（情绪记账扩到五项）')
+assert.equal(GROUPS.flatMap((g) => g.fields).length, 38, '一共 38 个设置项（主动联想加打分公式/场景/调试三项）')
 const injection = GROUPS[0].fields.map((f) => f.path.join('.'))
 assert.ok(injection.includes('cardDailyMax'), '记忆注入这组要有「每天最多真注入几次」')
 assert.ok(injection.includes('cardMinConfidence'), '记忆注入这组要有「注入置信门槛」')
+// 三维打分：公式与场景都是下拉（kind: 'select'），调试开关是 bool。
+const assocFields = GROUPS.find((g) => g.title === '主动联想').fields
+for (const k of ['scoreMode', 'recallScene', 'axesDebug']) {
+  assert.ok(assocFields.map((f) => f.path.join('.')).includes(k), `主动联想这组要有 ${k}`)
+}
+assert.ok(assocFields.some((f) => f.path.join('.') === 'recallScene' && f.kind === 'select' && f.options.length >= 4),
+  '打分场景是下拉，至少四个选项（recall / lookup-old / daily / auto）')
+assert.ok(assocFields.some((f) => f.path.join('.') === 'scoreMode' && f.kind === 'select' && f.options.length === 2),
+  '打分公式是下拉，两个选项（axes / legacy）')
 const moodFields = GROUPS.find((g) => g.title === '情绪记账').fields.map((f) => f.path.join('.'))
 for (const k of ['moodInjectDailyMax', 'moodInjectMinDelta', 'moodInjectCooldownHours']) {
   assert.ok(moodFields.includes(k), `情绪记账这组要有 ${k}`)

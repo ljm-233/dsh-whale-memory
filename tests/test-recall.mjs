@@ -5,6 +5,11 @@
  * 所以这里只测纯同步那一层：空库给空串、有东西就拼上、库坏了也不抛。
  * 深的检索不在这层（交给 memory_recall 工具，限流测试见 test-routes.mjs）。
  *
+ * 0.28.19 起排序默认走三维（lib/axes.mjs，0..1 刻度 + 按场景的门槛）。
+ * 下面这些用例钉的是**旧公式的比例尺**（门槛 2.0、confidence 用 top/(2·门槛)），
+ * 所以它们显式写成 `scoreMode: () => 'legacy'`——这不是绕过新代码，是 A/B 的另一条腿：
+ * 切回 legacy 就该与改之前逐条同名次。三维那条腿在 tests/test-axes.mjs 和本文件最后一节。
+ *
  * 跑法：node tests/test-recall.mjs
  */
 process.env.EMBED_URL = 'http://127.0.0.1:1'
@@ -173,7 +178,7 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
   adb.prepare('INSERT INTO entries (u,a,t,w,emo,vec,hot,tier) VALUES (?,?,?,?,?,?,0,1)')
     .run('插件的注入点换成 context 之后，pre-step 那条路被砍掉了', '嗯，深度联想也一起没了', t0 - 86400000, 1, '[]', null)
 
-  const rec = createRecall(depsOf(adb))
+  const rec = createRecall(depsOf(adb, { scoreMode: () => 'legacy' }))
   const ASK = '插件重启之后注入点还有问题吗'
   await rec.associate('session-assoc-1', ASK)
   const withAssoc = rec.card({ session: { id: 'session-assoc-1' } })
@@ -210,7 +215,7 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
     bigDb.prepare('INSERT INTO entries (u,a,t,w,emo,vec,hot,tier) VALUES (?,?,?,?,?,?,0,0)')
       .run(`插件注入点第${i}条：${'很长的旧事'.repeat(20)}尾巴标记${i}`, '嗯', Date.now() - i * 3600 * 1000, 3, '[]', null)
   }
-  const small = createRecall(depsOf(bigDb, { budgetChars: () => 300 }))
+  const small = createRecall(depsOf(bigDb, { budgetChars: () => 300, scoreMode: () => 'legacy' }))
   await small.associate('session-assoc-2', ASK)
   const smallCard = small.card({ session: { id: 'session-assoc-2' } })
   check('整卡不超预算', smallCard.length <= 300, String(smallCard.length))
@@ -297,7 +302,7 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
     mdb.prepare('INSERT INTO entries (u,a,t,w,emo,vec,hot,tier) VALUES (?,?,?,?,?,?,0,0)')
       .run(`插件注入点第${i}条：${'很长的旧事'.repeat(30)}尾巴标记${i}`, '嗯', base - i * 3600 * 1000, 4, '[]', null)
   }
-  const rec = createRecall(depsOf(mdb, { budgetChars: () => 3000 }))
+  const rec = createRecall(depsOf(mdb, { budgetChars: () => 3000, scoreMode: () => 'legacy' }))
   const ASK2 = '插件注入点还有问题吗'
   const section = await rec.associate('session-section', ASK2)
   const cards = section.split('\n').filter((l) => l !== '')
@@ -388,7 +393,7 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
   const gid = Number(gdb.prepare('SELECT last_insert_rowid() AS id').get().id)
   const hitsOf = () => Number(gdb.prepare('SELECT hits FROM entries WHERE id = ?').get(gid).hits)
 
-  const rec = createRecall(depsOf(gdb))
+  const rec = createRecall(depsOf(gdb, { scoreMode: () => 'legacy' }))
   await rec.associate('s-gate', ASK)
   const first = rec.card({ session: { id: 's-gate' } })
   check('第一次真注入', first.includes('和这次有关'), first.slice(0, 80))
@@ -412,7 +417,7 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
   const capDb = freshDb()
   capDb.prepare('INSERT INTO entries (u,a,t,w,emo,vec,hot,tier) VALUES (?,?,?,?,?,?,0,0)')
     .run('插件重启之后注入点还有问题吗，上下文那条路还通不通', '嗯，通了', Date.now(), 1, '[]', null)
-  const capRec = createRecall(depsOf(capDb, { cardDailyMax: () => 2 }))
+  const capRec = createRecall(depsOf(capDb, { cardDailyMax: () => 2, scoreMode: () => 'legacy' }))
   await capRec.associate('s-cap', ASK)
   const outs = []
   for (let i = 1; i <= 5; i += 1) {
@@ -430,7 +435,7 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
   const lowDb = freshDb()
   lowDb.prepare('INSERT INTO entries (u,a,t,w,emo,vec,hot,tier) VALUES (?,?,?,?,?,?,0,0)')
     .run('插件出岔子', '嗯', Date.now(), 1, '[]', null)
-  const lowRec = createRecall(depsOf(lowDb))
+  const lowRec = createRecall(depsOf(lowDb, { scoreMode: () => 'legacy' }))
   await lowRec.associate('s-low-conf', ASK)
   const lowCard = lowRec.card({ session: { id: 's-low-conf' } })
   const lowState = readMeta(lowDb)
@@ -442,10 +447,88 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
   check('门槛没放过就不记次数', (lowState.count ?? 0) === 0, String(lowState.count))
 
   // 门槛调低到 0.3，同一份输入就放行了——说明卡的正是那个数，不是别的
-  const looseRec = createRecall(depsOf(lowDb, { cardMinConfidence: () => 0.3 }))
+  const looseRec = createRecall(depsOf(lowDb, { cardMinConfidence: () => 0.3, scoreMode: () => 'legacy' }))
   await looseRec.associate('s-loose', ASK)
   const looseCard = looseRec.card({ session: { id: 's-loose' } })
   check('门槛调低就放行', looseCard.includes('和这次有关'), looseCard.slice(0, 80))
+}
+
+
+// ---- 14. 三维打分接进来：同一批条目，换场景就换名次（就是「不是换个常数」） ----
+{
+  const adb = freshDb()
+  const now = Date.now()
+  const Q = '插件注入点还有问题吗'
+  const ins = 'INSERT INTO entries (u,a,t,w,emo,vec,hot,tier,hits) VALUES (?,?,?,?,?,?,0,0,?)'
+  // (a) 旧的、重的：300 天前，w 到「印象深刻」，两档情绪，被想起过 4 次
+  adb.prepare(ins).run('插件注入点还有问题吗，上下文那条路还通不通', '嗯，通了', now - 300 * 86400000, 8, '["sad","tired"]', null, 4)
+  const idOld = Number(adb.prepare('SELECT last_insert_rowid() AS id').get().id)
+  // (b) 新的、薄的：昨天，w=1，没情绪，一次没被动过
+  adb.prepare(ins).run(Q, '嗯', now - 86400000, 1, '[]', null, 0)
+  const idNew = Number(adb.prepare('SELECT last_insert_rowid() AS id').get().id)
+  const tailOf = (id) => String(id).slice(-6)
+
+  /** 抓一次 associate 的三轴日志（axesDebug 打开时打的那几行）。 */
+  const logs = []
+  const realLog = console.log
+  console.log = (...args) => { logs.push(args.join(' ')) }
+  const runAs = async (scene) => {
+    logs.length = 0
+    const rec = createRecall(depsOf(adb, {
+      scoreMode: () => 'axes', recallScene: () => scene, axesDebug: () => true,
+    }))
+    await rec.associate(`s-axes-${scene}`, Q)
+    const header = logs.find((l) => l.includes('三轴分解'))
+    const rows = logs
+      .map((l) => l.match(/#([0-9a-f]+) rel=([\d.]+) imp=([\d.]+) time=([\d.]+) → ([\d.]+)/u))
+      .filter(Boolean)
+      .map((m) => ({ id: m[1], rel: Number(m[2]), imp: Number(m[3]), time: Number(m[4]), score: Number(m[5]) }))
+    return { header, rows }
+  }
+
+  let recall = null
+  let lookup = null
+  let daily = null
+  try {
+    recall = await runAs('recall')
+    lookup = await runAs('lookup-old')
+    daily = await runAs('daily')
+  } finally {
+    console.log = realLog
+  }
+
+  check('axesDebug 打出场景与权重（含半衰与门槛）',
+    Boolean(recall.header) && recall.header.includes('scene=recall')
+    && recall.header.includes('w=rel0.55/imp0.25/time0.2') && recall.header.includes('半衰=30天'),
+    recall.header)
+  check('recall 场景两条都过线、旧的排前',
+    recall.rows.length === 2 && recall.rows[0].id === tailOf(idOld) && recall.rows[0].score > recall.rows[1].score,
+    JSON.stringify(recall.rows))
+  check('lookup-old 只剩旧的那条（新的那条 0.44 没到 0.45）',
+    lookup.rows.length === 1 && lookup.rows[0].id === tailOf(idOld), JSON.stringify(lookup.rows))
+  check('daily 只剩新的那条（旧的 300 天掉到线下）',
+    daily.rows.length === 1 && daily.rows[0].id === tailOf(idNew), JSON.stringify(daily.rows))
+
+  const oldRecall = recall.rows.find((r) => r.id === tailOf(idOld))
+  const oldLookup = lookup.rows.find((r) => r.id === tailOf(idOld))
+  check('同一个 t：time 随场景从 ≈0 变成 ≈0.94',
+    oldRecall !== undefined && oldLookup !== undefined
+    && oldLookup.time - oldRecall.time > 0.5, `${oldRecall?.time} → ${oldLookup?.time}`)
+  check('imp 只由条目决定（两个场景一致）',
+    oldRecall !== undefined && oldLookup !== undefined && Math.abs(oldRecall.imp - oldLookup.imp) < 0.011,
+    `${oldRecall?.imp} vs ${oldLookup?.imp}`)
+  check('rel 也不随场景变（权重才变）',
+    oldRecall !== undefined && oldLookup !== undefined && Math.abs(oldRecall.rel - oldLookup.rel) < 0.011,
+    `${oldRecall?.rel} vs ${oldLookup?.rel}`)
+  check('三轴分解里没有 NaN', [recall, lookup, daily].every((r) => r.rows.every((x) => Number.isFinite(x.time) && Number.isFinite(x.score))))
+
+  // 关掉调试就一个字都不打（日志是给人看的，默认别刷）
+  {
+    logs.length = 0
+    const quiet = createRecall(depsOf(adb, { scoreMode: () => 'axes', axesDebug: () => false }))
+    await quiet.associate('s-axes-quiet', Q)
+    check('axesDebug 默认关：不打分解', logs.filter((l) => l.includes('三轴分解')).length === 0)
+  }
 }
 
 console.log(`\n通过 ${pass}，失败 ${fail}`)

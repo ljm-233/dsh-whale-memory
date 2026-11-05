@@ -64,11 +64,22 @@ window.__ModuleLoader__.load({
       {
         form: 'memory',
         title: '主动联想',
-        hint: '它会不会自己想起旧事。门槛调高，它就安静一些。这三项只管记忆卡里的「和这次有关」那一段，不管 memory_recall 工具。',
+        hint: '它会不会自己想起旧事。门槛调高，它就安静一些。前几项只管记忆卡里的「和这次有关」那一段，不管 memory_recall 工具。打分公式与场景是同一套分怎么算出来的：axes 是相关性/重要性/时间三轴合成（0~1），legacy 是旧公式（2.0 刻度，A/B 对照用，切回去等于回到旧排序）；场景决定三套权重与半衰期——想问旧事就用 lookup-old，日常聊天用 daily，auto 按「上次/以前/那个」这类线索词自己挑。',
         fields: [
           { path: ['recallMax'], label: '每轮最多想起几条', kind: 'int', min: 0, max: 50 },
-          { path: ['recallThreshold'], label: '想起门槛', kind: 'num', min: 0, max: 1000 },
+          { path: ['recallThreshold'], label: '想起门槛（legacy 用）', kind: 'num', min: 0, max: 1000 },
           { path: ['weightMax'], label: '权重上限', kind: 'num', min: 1, max: 10000 },
+          { path: ['scoreMode'], label: '打分公式', kind: 'select', options: [
+            { value: 'axes', label: 'axes · 三维（相关性/重要性/时间）' },
+            { value: 'legacy', label: 'legacy · 旧公式（A/B 对照）' },
+          ] },
+          { path: ['recallScene'], label: '打分场景', kind: 'select', options: [
+            { value: 'recall', label: 'recall · 主动联想（默认）' },
+            { value: 'lookup-old', label: 'lookup-old · 查旧事（十年半衰）' },
+            { value: 'daily', label: 'daily · 日常对话（旧事别抢戏）' },
+            { value: 'auto', label: 'auto · 按线索词自己挑' },
+          ] },
+          { path: ['axesDebug'], label: '日志打印三轴分解', kind: 'bool' },
         ],
       },
       {
@@ -780,6 +791,23 @@ window.__ModuleLoader__.load({
               onKeyDown: (e) => { if (e.key === 'Enter') e.currentTarget.blur() },
               style: { width: '180px' },
             })
+          }
+          if (field.kind === 'select') {
+            // 下拉：选项写死在 GROUPS 里，值直接写回配置（和输入框一样一次提交，没有草稿态）。
+            const opts = Array.isArray(field.options) ? field.options : []
+            const current = opts.some((o) => String(o.value) === String(shown))
+              ? String(shown)
+              : String(opts[0]?.value ?? '')
+            return h('select', {
+              value: current,
+              disabled,
+              'aria-label': field.label,
+              onChange: (e) => onWrite(e.target.value),
+              style: {
+                fontSize: '11px', padding: '1px 4px', borderRadius: '4px',
+                border: '1px solid currentColor', background: 'transparent', color: 'inherit',
+              },
+            }, ...opts.map((o) => h('option', { key: String(o.value), value: String(o.value) }, o.label ?? String(o.value))))
           }
           if (field.kind === 'bool') {
             const checked = shown === true

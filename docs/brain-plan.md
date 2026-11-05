@@ -1,8 +1,74 @@
 # 大脑计划：人、三维、三件能力、代价
 
 > 目标：把「记得说过什么」升级成「记得谁说的、值多少、什么时候的」，并且**不换存储、不加依赖、不改现有接口契约**。
-> 这一份是设计，不是接线：仓库里只多这一页文档，运行时行为一个字都没动。原型在 `/tmp/brain-proto/`（纯函数 + `node --test`）。
+> 这一份原本是设计（写时仓库一个字节没动）。P0 三项与「大脑三件」的第一版（取舍层影子 / 工作记忆 / 反思）都已按它落地，接线范围见开头「实现状态」一节；其余照旧是设计。原型在 `/tmp/brain-proto/`（纯函数 + `node --test`）。
 > 写于 2026-11-05，0.28.18。
+
+## 实现状态（0.28.18，2026-11-05）
+
+**P0 三项已落地**，P1/P2 一个字没动。
+
+| 项 | 状态 | 落点 |
+| --- | --- | --- |
+| ① 建表/加列 | 已做 | `lib/speaker.mjs` 的 `ensureSpeakerColumns()`，挂在 `lib/index.mjs` 既有 `ensure*` 段（`ensureMoodTable` 之后）。`entries` 加 `spk TEXT NOT NULL DEFAULT ''` + `imp REAL` + `idx_entries_spk_t`；新表 `person(spk, space, name, aka, score, source, updated)` + `idx_person_name`（普通索引，`name` 不唯一）。重复执行安全。 |
+| ② 写入侧带说话人 | 已做（走 2b） | 探过了：`msg.source` **没有** `senderId`，只有 `{kind:'user'}`（证据见下）。所以走群档对齐：`lib/writer.mjs` 的 flush 里按「正文痕迹 → 群档 ±10 分钟唯一对齐 → 空串」解析，`INSERT` 多一列。开关 `speakerEnabled`（默认 `true`，热改），关掉就永远写空串；群档路径可用 `speakerGroupDb` 覆盖。 |
+| ③ 回填脚本 | 已做 | `scripts/backfill-speakers.mjs`：`--dry-run`（默认）/ `--apply` / `--limit N` / `--migrate`（库副本上补列用）/ `--db` / `--group-db`。只写 `spk` 一列。 |
+| 4. `person` 从 `认人.md`/群档生成 | **没做** | 表建好了，生成留在 P0-4（`lib/people.mjs`）。验收 SQL 里的 `person` 行是在 `/tmp` 副本上手工播种的（来源：群档 `sender_name`，只读），仓库本身不写这一张表。 |
+| 5. 三维纯函数（`lib/axes.mjs`） | 已做（P0-5） | 原型 `/tmp/brain-proto/axes.mjs` 整体搬进 `lib/axes.mjs`（SCENE / `relevanceAxis` / `importanceAxis` / `timeAxis` / `axesOf` / `scoreEntry` 一字未改，另加 `sceneOf` / `detectScene` / `resolveScene`），并**接进召回**（见下节）。 |
+| P1 / P2 | **没做** | 照分期表。 |
+
+**`msg.source` 探测结论（本次实测）**：没有 `senderId`。三条证据：
+
+- `packages/llm/llm/src/message.ts:111` —— `MessageSourceMap.user = { kind: 'user' }`，user 这一类源**不声明任何字段**。
+- `packages/api/session-controller/src/index.ts:479-484` —— RPC `prompt` 组出来的 source 只有 `kind` / `rpcId` / `clientTimeZone?` / `principal?`（`principal` 是远端身份，不是 IM 的 openid）。
+- `@xmanrui/dsh-im` 的 `source()`（`src/channels/qq/qq-bridge.mjs:732`）喂的是**正文**：`enhanceContextContent` 把它渲染成 `<dsh_im_source>{…}</dsh_im_source>` 块写进 prompt（`src/channels/shared/context-enhancement.mjs`，默认 `enabled:false`）。所以信封里的 senderId 落在**文字**里，不落在 `msg.source` 上。
+
+**老数据回填实测（1951 条库的 `/tmp` 副本，1819 条候选）**：正则 51（2.8%）、对齐 924（50.8%）、歧义 1、无解 741、太短不判 102；最终覆盖 975 / 1819 = **53.6%**（留空 46.4%）。留空主要来自两处：`u` 为空或只有我这侧的条目（132 条，不在候选里），以及群档里根本没有这句（早期会话换过库/跨窗口批量输入）。
+
+**覆盖率口径的两条已知偏差**：
+
+- `spk` 用 `DEFAULT ''`（照本设计的 DDL），所以「没认出来」是**空串**不是 NULL。`SELECT DISTINCT length(spk)` 会同时看到 `0` 和 `8`——要判「有没有写满 8 位」，条件得带上 `spk <> ''`。
+- 新建条目这一侧（`t` 晚于接线时间）按本设计的判据是「一天内 `有` ≥ 95%」，但群档里同一句必须唯一命中；实测本机群档对齐命中约一半，**这条 ≥95% 的判据目前达不到**，真原因是「群档里没有这句」，不是解析写坏了。要抬上去只有两条路：把 `<dsh_im_source>` 上下文增强在 dsh-im 设置页打开（`enabled:true`，正文里就自带 `senderId`），或者等 dsh-im 把 senderId 放进 `msg.source`。两条都不改本仓库。
+
+**回滚**：`DROP INDEX idx_entries_spk_t;` + 两条 `ALTER TABLE entries DROP COLUMN`；`DROP TABLE person;`。P0 只写不读，没有既有路径依赖它们。
+
+### P1 第一版：大脑三件（2026-11-05 晚，0.28.18 续）
+
+三件都按第三节落地，**没有一处改设计**：判据仍是纯规则、工作记忆仍单向、反思仍只落表。
+
+| 件 | 落点 | 行为 |
+| --- | --- | --- |
+| ① 取舍层（影子） | `lib/admission.mjs`（新）+ `lib/index.mjs` 的 writer 钩子 + 设置项 `admitShadow`（默认 `true`，热改） | 新表 `admit(id, at, kind, subject, decision, reason, applied)`，`decision ∈ keep/log-only/drop`。规则表 `RULES` 每条都有 id，`reason` 写成 `fact+3,long+2 \| len=22 dup=0.14 score=5 -> keep`——命中了哪几条、原值多少，一眼能读。`greet-only` / `one-shot` 是**一票否决**（验证码旁边常跟着一句正常话，加分叠起来就会变成「值得记」）。影子模式 `applied=0`，只写表；关掉 `admitShadow` 才真的按 `drop` 拦写入（`applied=1`）。 |
+| ② 工作记忆 | `lib/tasks.mjs`（新）+ `scripts/task-sync.mjs`（新）+ `lib/recall.mjs` 卡片底部一行 | 新表 `task(id, space, title, status, created_at, updated_at, src)`，`status ∈ doing/blocked/done`。`NEXT.md` → `task` **单向**（脚本只读 NEXT，绝不回写；标题不变就不动 `updated_at`，所以跑两次栈序不动、`inserted=0` / `revived=0` / `closed=0`）。注入只有一行 `手上：A / B / C`（`doing` 优先、`updated_at` 倒序、最多三条），空栈整行不出现；它在 `MEMORY_BUDGET_CHARS` 结算**之后**拼上去，不占预算（实测同一份卡 503 字 ↔ 去掉任务行 423 字，差 80 = 那一行 78 + 空行 2）。 |
+| ③ 反思（一天一条，可撤销） | `lib/reflect.mjs`（新） | 新表 `reflection(id, day, changed_file, before, after, reason, reverted)`，`day` 唯一。三道闸：一天一条（`day-taken`）、一周内不许重复同一条（按 `before/after` 归一化后的指纹，`repeat`）、改动对象只允许 `notes/VOICE.md`（`file-not-allowed`）。**这一版不自动改文件**：全过才留 `.bak.<YYYYMMDD-HHmmss>` + 落表 + 打印建议，实际改由人确认；`revert()` 只把 `reverted` 置 1（原文逐字在表里，随时可退）。 |
+
+**顺手改名（名不副实）**：`lib/persona.mjs` 那行「情绪底色」其实是**对方话里的情绪词统计**（`entries.emo` 来自 `writer.mjs` 拿用户那句话跑 `detectEmotions`，`mood_log` 才是我的心情）。展示文案改成「对方话里的情绪词（近 200 条，不是我的心情）」，注释写明它不是我的状态；字段名不动（`entries.emo` 的契约不变）。注意：真实库里 `meta.persona` 还是旧文案，下次梳理（`rebuildPersona`）才会被覆盖。
+
+**测试**：`tests/test-brain.mjs` 13 条（三档 decision + reason 可读 / 重复度压成 log-only / 一次性信息否决 / 影子三行 `applied=0` / 判据表无匿名规则 / 同步幂等 / 栈顶三条 `doing` 优先 / 空栈不注入 / 复选框解析 / 一天一条 / 一周不重复 / `.bak` 与「不自动改文件」/ 备份缺文件不报错）。`npm test`、`node scripts/check-all.mjs`、`node scripts/smoke.mjs` 全过。
+
+**影子模式的退出条件（写死在这里，免得以后自己给自己放行）**：①`admit` 攒满 **14 天**连续记录；②每天 `keep` 条数与 `entries` 当日增量偏差 **< 20%**（判据与真实入库对得上）；③随机抽 **20 条**读到 `reason` 能解释「为什么这么判」，其中至少 5 条是 `drop`/`log-only`（否则等于没在判）；④抽检里 `drop` 误判（该记却被判忘）**≤ 1/20**。四条全过才把 `admitShadow` 关掉（关掉等于 `drop` 开始真的拦写入，`applied=1`）；任何一条不过就继续影子，并把偏差写进 `CHANGELOG`。
+
+**回滚**：`DROP TABLE admit; DROP TABLE task; DROP TABLE reflection;` + 关掉 `admitShadow` 与卡片里那行 `taskLine`。三个表都只写不读（除卡片那一行），`NEXT.md` 原样还在。
+
+### P1：三维打分接进召回（2026-11-05 晚，0.28.18 续）
+
+按第二节原样接线，**九个数没动一个**（三套权重 + 三个半衰 + 三个门槛）。三轴分开算、只合一个分。
+
+| 项 | 落点 | 说明 |
+| --- | --- | --- |
+| 三轴纯函数 | `lib/axes.mjs`（新） | 原型搬过来：`rel = 0.70·sim + 0.25·log1p(hits)/log1p(5) + 0.05·(1 − min(9,tier)/9)`、`imp = 0.35·(w−1)/7 + 0.25·min(1,n_emo/2) + 0.20·min(1,cites/3) + 0.20·[marked]`、`time = 0.5^(ageDays/halfLife)`；`scoreEntry()` 只出一个 0..1 的分，`axes` 只给测试/调试看。`IMPORTANT_W` 直接取 `constants.mjs` 的 `IMPORTANT_WEIGHT`（不再各写一份）。`sceneOf()` 认不出的场景名回落 `recall`；`detectScene()` 按线索词 `{上周,上次,以前,之前,那个,后来,记得吗}` 选 `lookup-old`（只在配置成 `auto` 时用）。 |
+| 场景权重 | `lib/axes.mjs` 的 `SCENE` | `recall` .55/.25/.20 半衰 30d、`lookup-old` .45/.45/.10 半衰 3650d、`daily` .35/.15/.50 半衰 7d。权重和恒为 1（测试钉住）。**单一来源**：设置页与 `/status` 都回传它算出来的结果，别处不写数。 |
+| 接入点 | `lib/recall.mjs` 的 `associate()` | 原来 `recall.mjs:136-142` 那三行（`decay`/`penalty`/`s`）搬进 `legacyScore()`；新路径用 `scoreEntry()`。冷区候选一次查询补两列原料：`imp`（缺列 → `NULL AS imp`）与 `cites`（`entry_evidence` 条数，缺表 → 0），探测只做一次。`emo` 解析失败当空数组——一个坏字段不许把整段联想带走。 |
+| 门槛 | `lib/constants.mjs` 的 `AXES_THRESHOLD` | 新分 0..1，旧那把 2.0 的尺子不能用：`recall 0.55 / lookup-old 0.45 / daily 0.60`。`legacy` 模式仍读 `recallThreshold`（默认 2.0），两条路各用各的门槛。`confidenceOf()` 也改成读这一轮真用的那把尺子。 |
+| 可观测 | `/dsh-whale-memory/status` 的 `axes` 字段 + `axesDebug` | status 回 `{mode, scene, sceneConfigured, debug, threshold, scenes:{三套权重+半衰+门槛}, envOverride}`。`axesDebug`（默认关，设置页可开）在日志里打一行头（场景/权重/半衰/门槛）+ 本次 top5 每条 `rel/imp/time → 分`，只读、不动排序、不写库。 |
+| 切换 | 设置项 `scoreMode` / 环境变量 `WHALE_SCORE_MODE` | `axes`（默认）↔ `legacy`（旧公式）。环境变量优先，重启生效；设置页改完下一轮就生效。设置页「主动联想」组新增三行：打分公式（下拉）、打分场景（下拉：recall/lookup-old/daily/auto）、日志打印三轴分解（开关）。client.js 为此新增 `kind: 'select'`（原来只有 string/bool/num 三种）。 |
+
+**已知的口径（验收实测，别当成 bug）**：真实库里 1955 条**全部落在 10-30~11-05 这七天内**，冷区候选又是「最近 300 条冷区」，所以 `time` 轴目前全是 ≈1.00——两场景的差别主要体现在 `imp` 权重（.25 → .45）上；十年半衰要等冷区窗口真的够到旧条目才会显形。实测两条：`雾屋 看路` 在 `recall` 只有 2 条过线（rel .54/.54），`lookup-old` 多出两条 `rel .29 / imp .67` 的（重要性顶上来）；`记忆卡的置信门槛` 五条都在、名次不变，只是第 1/2 名的分差被压平（.73/.73 → .70/.70）。
+
+**测试**：`tests/test-axes.mjs` 48 条（原型三条承诺 + `sceneOf`/`detectScene`/`imp` 覆盖 + 常量同源）；`tests/test-recall.mjs` 新增第 14 节 8 条（场景换人换名次 / 同一 `t` 的 `time` 从 0.00 变 0.94 / `rel`·`imp` 不随场景变 / 脏数据不吐 NaN / 调试默认关），原有 7 处钉**旧公式比例尺**的用例显式写成 `scoreMode:'legacy'`（A/B 的另一条腿，切回去应当与改之前逐条同名次）。
+
+**回滚**：设置页把「打分公式」改回 `legacy`（或 `WHALE_SCORE_MODE=legacy` 重启）即回到旧排序，阈值也回到 `recallThreshold` 那把尺子；要彻底删就删 `lib/axes.mjs` + `tests/test-axes.mjs` 并撤掉 `associate()` 里那一个分支。库里一个字都不动（`imp` 列是 P0 就加好的，NULL = 自动）。
+
 
 ## 现状底账（2026-11-05 实测，只读查的）
 
