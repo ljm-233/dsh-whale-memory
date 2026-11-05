@@ -340,17 +340,18 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
     hits: 4, tier: 1, lastHit: nowMs, hot: false,
   }
   const meta = entryMetaText(item)
-  for (const part of ['default', 'abcdef12', '命中 4 次', 'tier 1', '最后想起', '冷区']) {
+  for (const part of ['default', 'abcdef12', '命中 4 次', '最后想起', '冷区']) {
     assert.ok(meta.includes(part), `元信息要有「${part}」：${meta}`)
   }
   assert.ok(!meta.includes('abcdef123'), 'spk 只取前 8 位')
   assert.ok(!meta.includes('\n'), '元信息一行排完')
   assert.ok(!meta.includes('重要度'), 'imp 为 NULL 时收起态不写「重要度」（不占位）')
+  assert.ok(!meta.includes('tier 1'), 'tier 1 是冷区默认值，收起态不写（1978 条里 1947 条都是它）')
   assert.ok(!meta.includes('未知'), '没来源时不再写「未知」占位')
 
   // 真库里 spk 全空、imp 全 NULL、tier 0：收起时正好四段。
   const bare = entryMetaText({ ...item, spk: '', imp: null, tier: 0, hits: 0, lastHit: 0, hot: false })
-  assert.equal(bare, 'default · 命中 0 次 · 还没被想起 · 冷区', `四段：${bare}`)
+  assert.equal(bare, 'default · 还没被想起 · 冷区', `三段（命中0与没想起合并）：${bare}`)
 
   // 三个可选字段都有值时的收起态：来源 8 位 + 重要度 + tier 都出现。
   const rich = entryMetaText({ ...item, spk: '8F0AA398xxxx', imp: 0.87, tier: 2 })

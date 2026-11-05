@@ -1034,9 +1034,10 @@ window.__ModuleLoader__.load({
       if (spk !== '' || open) parts.push(`来源 ${spk === '' ? '没记' : (open ? spk : spk.slice(0, 8))}`)
       // 重要度：imp 是 NULL 表示走自动公式，不算「有值」；点开时才明说「自动」。
       if (imp !== null || open) parts.push(`重要度 ${imp === null ? '自动' : Math.round(imp * 100) / 100}`)
-      parts.push(`命中 ${hits} 次`)
-      // tier 0 = 刚进来、还没分层，写出来是噪声。
-      if (tier > 0 || open) parts.push(`tier ${tier}`)
+      // 命中 0 次与「还没被想起」说的是同一件事，合并成一句，不重复。
+      if (hits > 0) parts.push(`命中 ${hits} 次`)
+      // tier 0 = 刚进来、tier 1 = 冷区默认值（1947/1978 条都是它），都不值得常显。
+      if (tier >= 2 || open) parts.push(`tier ${tier}`)
       parts.push(lastHit > 0 ? `最后想起 ${open ? fmtTime(lastHit) : fmtClock(lastHit)}` : '还没被想起')
       parts.push(item?.hot === true ? '热区' : '冷区')
       if (open) {
