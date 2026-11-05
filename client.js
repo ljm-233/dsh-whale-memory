@@ -84,10 +84,13 @@ window.__ModuleLoader__.load({
       {
         form: 'memory',
         title: '情绪记账',
-        hint: '每轮结束记一笔心情，写进库给自己看：不改提示词、不进上下文、不占记忆预算。关掉就整轮跳过。半衰期是「多久落回基线」，调小散得快。',
+        hint: '每轮结束判一次心情，判的是「我这一轮说了什么」——词、句长、有没有说「不想 / 算了 / 没事」、是不是自己开的口；对方的话只算一点冲击。攒够了才在上下文里说一句（一行、不带数值），说不说由下面三道闸管：一天最多几次、比上次开口动了几格、两次之间隔多久。关掉就整轮跳过，一个字都不写、一句都不说。',
         fields: [
           { path: ['moodEnabled'], label: '记账', kind: 'bool' },
           { path: ['moodHalfLifeHours'], label: '心情半衰期（小时）', kind: 'int', min: 1, max: 168 },
+          { path: ['moodInjectDailyMax'], label: '一天最多说几次', kind: 'int', min: 0, max: 50 },
+          { path: ['moodInjectMinDelta'], label: '比上次开口动几格才说', kind: 'num', min: 0, max: 100 },
+          { path: ['moodInjectCooldownHours'], label: '两次之间至少隔几小时', kind: 'num', min: 0, max: 168 },
         ],
       },
       {

@@ -188,10 +188,14 @@ assert.equal(GROUPS.length, 10)
 assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 8, '记忆八组（新增「情绪记账」，仍不含「记忆空间」单行卡）')
 assert.ok(GROUPS[0].fields.some((f) => f.path.join('.') === 'space'), '空间字段落在记忆注入这组')
 assert.equal(GROUPS.filter((g) => g.form === 'proactive').length, 2, '主动消息两组')
-assert.equal(GROUPS.flatMap((g) => g.fields).length, 32, '一共 32 个设置项（新增情绪记账两项）')
+assert.equal(GROUPS.flatMap((g) => g.fields).length, 35, '一共 35 个设置项（情绪记账扩到五项）')
 const injection = GROUPS[0].fields.map((f) => f.path.join('.'))
 assert.ok(injection.includes('cardDailyMax'), '记忆注入这组要有「每天最多真注入几次」')
 assert.ok(injection.includes('cardMinConfidence'), '记忆注入这组要有「注入置信门槛」')
+const moodFields = GROUPS.find((g) => g.title === '情绪记账').fields.map((f) => f.path.join('.'))
+for (const k of ['moodInjectDailyMax', 'moodInjectMinDelta', 'moodInjectCooldownHours']) {
+  assert.ok(moodFields.includes(k), `情绪记账这组要有 ${k}`)
+}
 
 writes.length = 0
 writePath(form, ['budgetChars'], 1500)

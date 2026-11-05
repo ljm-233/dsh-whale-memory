@@ -1,32 +1,40 @@
 ## 实现状态（0.28.18）
 
-**已做：记账 + 查询。**
+**数据源换了：从「镜子」改成「我自己的」。**
 
-- `lib/mood.mjs`：原型整体搬进仓库（`note` / `say` / `applyTurn` 签名与行为不变），加存储层
-  `ensureMoodTable` / `loadState` / `saveState` / `logTurn` / `applyMoodTurn` / `readMood`，零依赖。
-- 表与状态：新表 `mood_log(id, at, day, space, mood, dims, raw, conf, injected, reason)` + 索引 `(day, space)`；
-  当前状态一条 meta 键 `mood.state.<space>`（JSON），和 `consolidate.mjs:73` 一样 `INSERT OR REPLACE`。
-  建表挂在 `lib/index.mjs` 既有迁移段（`ensureFactColumns` / `ensureHitColumns` 旁边）。
-- 挂载点：`session/event` 里的 `turn/end`（本仓库现用的等价钩子）。一轮只做两件事：写 `mood_log`、回写 meta。
-  **`injected` 恒为 0**——这一阶段没有任何注入口。同一 `at` 重复调用走 `same-turn`，不落第二笔。
-- 设置项两项：`moodEnabled`（默认 true，关掉整轮跳过）、`moodHalfLifeHours`（默认 3，范围 1–168）。
-  默认值只在 `lib/mood.mjs` 写一份（`MOOD_ENABLED` / `MOOD_HALF_HOURS`），schema 与设置页都读它。
-- 只读接口 `GET /dsh-whale-memory/mood?days=7&space=`：每天 `mood` 均值/`min`/`max`/`count` + 最近 20 条
-  `at/mood/reason`；参数越界截断不报错，空库返回 `{days:[],recent:[]}`。
+- `lib/mood.mjs`：`judgeSelf()`（新，主路径）从**本轮 assistant 的发言**判情绪；`judgeUser()`（旧）原样留着，
+  只在信号里没有 `assistantTexts` 时退回去。`judgeSignal()` 分派，`applyTurn` 的调用点已经切到新路径
+  （`lib/index.mjs` 的 `bookMoodTurn` 每轮都传 `assistantTexts`，空数组 = 我这轮没说话，不退回镜子）。
+- 判定权重（一句话）：我话里的词 tired/sad +7、happy +6、care +5、anxious 只给 sad +4；
+  语气上「不想/算了」tired +5、「没事/无所谓」sad +3、平均句长 ≥30 字 care +3、又短又碎 sad +2、
+  没人问我先说 happy +3；对方的话只算冲击（被夸 happy +1、被否 sad +2，≤ 旧版 4/6 的 1/3）；
+  环境另算（没跑通 sad +3、23–6 点 tired +3、连轮 ≥6 tired +2）。
+  阈值沿用：`|raw| ≥ 3` 或任一维 `≥ 5` 才动，总值每轮只吃 1/3。
+- `reason` 写「我说「<最多 20 字>」」——事后能翻回是哪句话让我变了。`state.source` 标 `self` / `user`。
+- **注入开了，但克制**：新 context 条目 `plugin:dsh-whale-memory:mood`，`order: 950`（紧接记忆卡 940），
+  一行、≤40 字、不带数值。四道闸，缺一不可：
+  ① `injectedFor === updatedAt`（同一状态只说一次）；
+  ② 日上限 `moodInjectDailyMax`（默认 2）；
+  ③ 幅度 `moodInjectMinDelta`（默认 8，和「上次开口时」的值比）；
+  ④ 冷却 `moodInjectCooldownHours`（默认 3 小时）。
+  拦下时写 `lastSkip = { reason, at }`（`already / daily-cap / below-delta / cooldown`），当场能查为什么没说。
+  **记账那一步不判说不说**（`applyTurn(..., { decide: false })`）——否则 `turn/end` 会把四道闸吃一次，
+  真到渲染时只剩 `already`，永远说不出去。
+- 三个默认值只在 `lib/constants.mjs` 写一份（`MOOD_INJECT_DAILY_MAX` / `MOOD_INJECT_MIN_DELTA` /
+  `MOOD_INJECT_COOLDOWN_HOURS`），schema 与设置页都读它，设置页不写 `fallback`。
+- 前缀缓存安全：仍走 `systemPrompt.context`（运行时尾部追加的 user/message），`systemPrompt` 各 section 一字不动；
+  情绪行自带 40 字 cap，不占 `MEMORY_BUDGET_CHARS=1000`。
+- 出口：`buildSelfLine()` 在 mood < 40 或 tired ≥ 25 时，在**同一行尾**补 `（不想做可以说）`——只是提示，
+  不改任何权限。另有一本账：我在会话里说出「不想做/不想弄/今天不想」这类话，`turn/end` 检测到就往
+  `<记忆库>/我不想做.md`（和 `LEDGER.md` 并排）append 一行「时间 + 我的原话」，**只记录不执行**。
+- 只读接口 `GET /dsh-whale-memory/mood?days=7&space=` 不变；注入发生后把那行 `mood_log.injected` 标成 1。
 
-**未做：注入。**
+**顺手记一笔（还没改名）**：`lib/persona.mjs:61-67` 输出的那行「情绪底色：sad(120)…」算的是
+**对方话里的情绪词统计**（`entries.emo`，近 200 条），不是我的状态。名字与事实不符，待改成
+「对方话里的情绪词（近 200 条）」。改名要连 persona 蒸馏的既有输出和 meta 缓存一起动，单独一次改。
 
-`systemPrompt.context` 没动、没有 order 950 的条目、没改记忆卡——`grep -rn "mood" lib/index.mjs | grep -i "context\|order"` 应为空。
-四道闸（`already / minor / low-confidence / daily-cap`）在 `say()` 里已经能算，返回的 `why` 目前只扔掉，不往外送。
-
-**下一步的条件（先攒数据，再定门槛）。**
-
-- 攒满 **两周** 且 `mood_log` **≥ 300 条**（按「一天几轮」推算，约等于每天 20 轮）；
-- 看三件事再动参数：`mood` 的日分布（基线 48 是不是偏低）、`dims` 里哪几根长期贴 0（该砍）、
-  `conf` 的分布（60 的门槛会拦掉多少）；
-- 到那时才加「日上限 / 置信门槛」两项设置，再考虑开注入；基线、门槛、上限都不许现在拍。
-
----
+**下一步**：攒两周 `mood_log`（≥300 条）再回看这三道闸的默认值——8 格/2 次/3 小时现在仍是拍的，
+`below-delta` 拦掉多少、`daily-cap` 一天撞几次，都得用真实分布说话。
 
 # 情绪系统设计（调研 + 方案，未接入运行时）
 
