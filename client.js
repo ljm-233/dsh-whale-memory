@@ -366,18 +366,36 @@ window.__ModuleLoader__.load({
         const [seq, setSeq] = React.useState(0)
         const [q, setQ] = React.useState('')
         const [allSpaces, setAllSpaces] = React.useState(false)
-        // 画像面板：重蒸桌面页时的忙标记；图谱：点中的那个点，和它的一句话原文。
+        // 画像面板：重蒸桌面页时的忙标记；图谱：空间/排序/展开的实体与它名下的记忆。
         const [deskBusy, setDeskBusy] = React.useState(false)
-        const [nodePick, setNodePick] = React.useState(null)
+        const [graphSpace, setGraphSpace] = React.useState('')
+        const [graphSort, setGraphSort] = React.useState('count')
+        const [spaces, setSpaces] = React.useState(null)
+        const [entity, setEntity] = React.useState(null)
+        const [memOpen, setMemOpen] = React.useState(null)
+
+        /** 这一页现在看的是哪个空间：没手动选就是设置里那个。 */
+        const spaceNow = () => (graphSpace !== '' ? graphSpace : (currentSpace || 'default'))
 
         const urlOf = (z) => {
           const extra = `&keyword=${encodeURIComponent(q)}&all=${allSpaces ? 1 : 0}`
           if (z === 'scenes') return '/dsh-whale-memory/scenes'
           if (z === 'persona') return '/dsh-whale-memory/persona'
-          if (z === 'graph') return '/dsh-whale-memory/graph'
+          if (z === 'graph') return `/dsh-whale-memory/graph?space=${encodeURIComponent(spaceNow())}&limit=50&sort=${graphSort}`
           if (z === 'spaces') return '/dsh-whale-memory/spaces'
           return `/dsh-whale-memory/entries?zone=${z}&limit=50${extra}`
         }
+
+        // 图谱的空间下拉读现成的 /spaces 列表：开一次就够，不跟着页签反复拉。
+        React.useEffect(() => {
+          if (zone !== 'graph' || spaces !== null) return undefined
+          let alive = true
+          fetch('/dsh-whale-memory/spaces', { headers: { accept: 'application/json' } })
+            .then((res) => (res.ok ? res.json() : null))
+            .then((json) => { if (alive) setSpaces(Array.isArray(json?.spaces) ? json.spaces : []) })
+            .catch(() => { if (alive) setSpaces([]) })
+          return () => { alive = false }
+        }, [zone, spaces])
 
         React.useEffect(() => {
           let alive = true
@@ -390,7 +408,7 @@ window.__ModuleLoader__.load({
             .then((json) => { if (alive) { setData(json); setDataZone(zone) } })
             .catch(() => { if (alive) { setData(null); setFailed(true) } })
           return () => { alive = false }
-        }, [zone, seq, allSpaces])
+        }, [zone, seq, allSpaces, graphSpace, graphSort])
 
         const tab = (key, label) => h('button', {
           type: 'button',
@@ -468,106 +486,100 @@ window.__ModuleLoader__.load({
           if (zone === 'graph') {
             const nodes = Array.isArray(data.nodes) ? data.nodes : []
             const links = Array.isArray(data.edges) ? data.edges : []
-            if (nodes.length === 0) return h('p', { style: { fontSize: '12px', opacity: 0.55 } }, '图谱还是空的。')
-            const W = 560
-            const H = 320
-            const shown = nodes.slice(0, 40)
-            // 库里可能几百个点，页面只画前 40；剩下的老实报个数，别假装画全了。
             const total = Number(data.total ?? nodes.length)
-            const omitted = Math.max(0, total - shown.length)
-            const names = new Set(shown.map((n) => n.name))
-            const edges = links.filter((e) => names.has(e.a) && names.has(e.b))
-            // 便宜的三段式布局：圆上初始 → 斥力推开 → 边当弹簧拉近。60 个点以内够用，不引依赖。
-            const pos = new Map()
-            shown.forEach((n, i) => {
-              const ang = (2 * Math.PI * i) / shown.length
-              pos.set(n.name, { x: W / 2 + Math.cos(ang) * 110, y: H / 2 + Math.sin(ang) * 110 })
-            })
-            for (let iter = 0; iter < 120; iter++) {
-              const list = [...pos.entries()]
-              for (let i = 0; i < list.length; i++) {
-                for (let j = i + 1; j < list.length; j++) {
-                  const [na, pa] = list[i]
-                  const [nb, pb] = list[j]
-                  let dx = pa.x - pb.x
-                  let dy = pa.y - pb.y
-                  let d2 = dx * dx + dy * dy
-                  if (d2 < 1) { dx = 0.1; dy = 0.1; d2 = 0.02 }
-                  const f = 2600 / d2
-                  const d = Math.sqrt(d2)
-                  pa.x += (dx / d) * f
-                  pa.y += (dy / d) * f
-                  pb.x -= (dx / d) * f
-                  pb.y -= (dy / d) * f
-                }
-              }
-              for (const e of edges) {
-                const pa = pos.get(e.a)
-                const pb = pos.get(e.b)
-                if (!pa || !pb) continue
-                const dx = pb.x - pa.x
-                const dy = pb.y - pa.y
-                const d = Math.max(1, Math.sqrt(dx * dx + dy * dy))
-                const pull = (d - 70) * 0.02
-                pa.x += (dx / d) * pull
-                pa.y += (dy / d) * pull
-                pb.x -= (dx / d) * pull
-                pb.y -= (dy / d) * pull
-              }
-              for (const p of pos.values()) {
-                p.x = Math.min(W - 12, Math.max(12, p.x))
-                p.y = Math.min(H - 12, Math.max(12, p.y))
+            const omitted = Math.max(0, total - nodes.length)
+            // 每个实体下面要列它的前几条边：先把边摊成「按这一端分组」的表。
+            const around = new Map()
+            for (const e of links) {
+              const w = Number(e.weight ?? e.w ?? 0)
+              for (const [me, other] of [[e.a, e.b], [e.b, e.a]]) {
+                if (!around.has(me)) around.set(me, [])
+                around.get(me).push({ other, w })
               }
             }
-            const maxW = Math.max(1, ...edges.map((e) => e.w))
-            /** 点一下节点：用现成的 entries 搜索取它的一条原文，不新开查询逻辑。 */
-            const pick = (name) => {
-              setNodePick({ name, text: '读取中…' })
-              fetch(`/dsh-whale-memory/entries?zone=cold&limit=1&all=1&keyword=${encodeURIComponent(name)}`, { headers: { accept: 'application/json' } })
+            for (const list of around.values()) list.sort((m, n) => n.w - m.w)
+            /** 点一个实体：展开它名下最近几条记忆；再点一次收起来。 */
+            const openEntity = (name) => {
+              if (entity !== null && entity.name === name) { setEntity(null); return }
+              setEntity({ name, items: null })
+              setMemOpen(null)
+              fetch(`/dsh-whale-memory/graph/entity?name=${encodeURIComponent(name)}&space=${encodeURIComponent(spaceNow())}&limit=5`, { headers: { accept: 'application/json' } })
                 .then((res) => (res.ok ? res.json() : null))
-                .then((json) => {
-                  const one = (json?.items ?? [])[0]
-                  setNodePick({ name, text: one === undefined ? '这条还没有落库的原文。' : String(one.user ?? '').slice(0, 90) })
-                })
-                .catch(() => setNodePick({ name, text: '读不到。' }))
+                .then((json) => setEntity((cur) => (cur !== null && cur.name === name
+                  ? { name, items: Array.isArray(json?.items) ? json.items : [] }
+                  : cur)))
+                .catch(() => setEntity((cur) => (cur !== null && cur.name === name ? { name, items: [] } : cur)))
             }
+            // 点一下就能穿过去，所以用按钮而不是纯文字；样式交给继承，别各写一套。
+            const linkStyle = {
+              border: 'none', background: 'transparent', cursor: 'pointer',
+              color: 'inherit', padding: 0, textAlign: 'left', font: 'inherit',
+            }
+            const spaceList = spaces === null || spaces.length === 0
+              ? [{ id: spaceNow(), count: 0 }]
+              : spaces
+            const rows = nodes.map((n) => {
+              const opened = entity !== null && entity.name === n.name
+              const mine = (around.get(n.name) ?? []).slice(0, 5)
+              const last = Number(n.lastHit ?? 0)
+              return h('li', { key: n.name, style: { padding: '4px 0', borderBottom: '1px solid rgba(128,128,128,0.12)' } },
+                h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px' } },
+                  h('button', { type: 'button', onClick: () => openEntity(n.name), style: { ...linkStyle, fontSize: '12px' } },
+                    `${opened ? '▾' : '▸'} ${n.name}`),
+                  h('span', { style: { fontSize: '11px', opacity: 0.5, fontFamily: 'monospace', flexShrink: 0 } },
+                    `${n.count ?? 0} 条 · 度 ${n.degree ?? 0} · ${last > 0 ? `最近出现在 ${fmtTime(last)}` : '还没记到时间'}`),
+                ),
+                mine.length === 0 ? null
+                  : h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '2px 12px', marginTop: '2px' } },
+                    ...mine.map((e) => h('button', {
+                      key: e.other,
+                      type: 'button',
+                      title: '切到这个实体',
+                      onClick: () => openEntity(e.other),
+                      style: { ...linkStyle, fontSize: '11px', opacity: 0.7 },
+                    }, `${n.name} ↔ ${e.other} ×${e.w}`))),
+                !opened ? null
+                  : entity.items === null
+                    ? h('p', { style: { fontSize: '11px', opacity: 0.55, margin: '2px 0 0' } }, '读取中…')
+                    : entity.items.length === 0
+                      ? h('p', { style: { fontSize: '11px', opacity: 0.55, margin: '2px 0 0' } }, '这个名字下暂时查不到原文。')
+                      : h('ol', { style: { display: 'flex', flexDirection: 'column', gap: '4px', margin: '2px 0 0', padding: '0 0 0 16px' } },
+                        ...entity.items.map((it) => h('li', { key: String(it.id), style: { fontSize: '11px', lineHeight: 1.5 } },
+                          h('div', {
+                            onClick: () => setMemOpen(memOpen === it.id ? null : it.id),
+                            style: { cursor: 'pointer', opacity: 0.85 },
+                          }, `${fmtTime(it.t)} · ${it.u}`),
+                          memOpen === it.id && String(it.a ?? '') !== ''
+                            ? h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', opacity: 0.5 } }, it.a)
+                            : null,
+                        ))),
+              )
+            })
             return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-              h('p', { style: { fontSize: '11px', opacity: 0.55, margin: 0 } },
-                `节点 ${total} 个（画前 ${shown.length}${omitted > 0 ? `，已省略 ${omitted} 个` : ''}）· 边 ${links.length} 条 · 线越粗一起出现得越多 · 点一下看点相关的原文`),
-              h('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: '100%', height: 'auto', border: '1px solid rgba(128,128,128,0.2)', borderRadius: '6px' } },
-                ...edges.map((e, i) => {
-                  const pa = pos.get(e.a)
-                  const pb = pos.get(e.b)
-                  if (!pa || !pb) return null
-                  return h('line', {
-                    key: `e${i}`,
-                    x1: pa.x, y1: pa.y, x2: pb.x, y2: pb.y,
-                    stroke: 'currentColor',
-                    strokeOpacity: 0.12 + 0.5 * (e.w / maxW),
-                    strokeWidth: 0.5 + 2 * (e.w / maxW),
-                  })
-                }),
-                ...shown.map((n) => {
-                  const p = pos.get(n.name)
-                  const r = 3 + Math.min(9, Math.sqrt(n.count) * 1.6)
-                  const picked = nodePick !== null && nodePick.name === n.name
-                  return h('g', {
-                    key: n.name,
-                    onClick: () => pick(n.name),
-                    style: { cursor: 'pointer' },
-                  },
-                    h('circle', { cx: p.x, cy: p.y, r, fill: 'currentColor', fillOpacity: picked ? 0.55 : 0.28, stroke: 'currentColor', strokeOpacity: picked ? 0.9 : 0.5 }),
-                    h('text', {
-                      x: p.x, y: p.y - r - 3,
-                      fontSize: 9, textAnchor: 'middle', fill: 'currentColor', fillOpacity: 0.75,
-                    }, n.name),
-                  )
-                }),
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+                h('label', { style: { fontSize: '11px', opacity: 0.65, display: 'flex', alignItems: 'center', gap: '4px' } },
+                  '空间',
+                  h('select', {
+                    value: spaceNow(),
+                    onChange: (e) => setGraphSpace(e.target.value),
+                    style: { fontSize: '11px', padding: '1px 4px', borderRadius: '4px', border: '1px solid currentColor', background: 'transparent', color: 'inherit' },
+                  }, ...spaceList.map((sp) => h('option', { key: sp.id, value: sp.id }, `${sp.id} · ${sp.count ?? 0} 条`)))),
+                h('span', { style: metaStyle },
+                  `实体 ${total} 个${omitted > 0 ? `（列前 ${nodes.length}，省略 ${omitted}）` : ''} · 边 ${links.length} 条`),
+                h('button', {
+                  type: 'button',
+                  title: '换一种排法',
+                  onClick: () => setGraphSort(graphSort === 'count' ? 'degree' : 'count'),
+                  style: { border: '1px solid currentColor', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', background: 'transparent', color: 'inherit', cursor: 'pointer', opacity: 0.85 },
+                }, graphSort === 'count' ? '按出现次数排' : '按联系数排'),
               ),
-              nodePick === null
-                ? null
-                : h('p', { style: { fontSize: '11px', opacity: 0.75, margin: 0, lineHeight: 1.5 } },
-                  `${nodePick.name}：${nodePick.text}`),
+              nodes.length === 0
+                ? h('p', { style: { fontSize: '12px', opacity: 0.6, margin: 0 } }, '这段记忆里还没攒出实体，等记忆再多一点。')
+                : h('ol', { style: { display: 'flex', flexDirection: 'column', margin: 0, padding: 0, listStyle: 'none' } }, ...rows),
+              nodes.length > 0 && links.length === 0
+                ? h('p', { style: { fontSize: '11px', opacity: 0.5, margin: 0, lineHeight: 1.6 } },
+                  '还没攒够共现，等记忆再多一点：一条边要被两条以上的记忆同时提到才留下（至少出现 2 次）。')
+                : null,
             )
           }
 
@@ -604,7 +616,7 @@ window.__ModuleLoader__.load({
               ...items.map((item) => h('li', { key: `${item.space ?? ''}:${item.topic}`, style: { fontSize: '12px', lineHeight: 1.5 } },
                 h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px' } },
                   h('span', { style: { fontSize: '11px', opacity: 0.5, fontFamily: 'monospace' } },
-                    `${item.topic} · ${item.count ?? 0} 条记忆 · ${(item.lastHit ?? 0) > 0 ? `最近触发 ${fmtTime(item.lastHit)}` : '还没被触发过'}`),
+                    `${item.topic} · ${item.count ?? 0} 条记忆 · ${(item.lastHit ?? 0) > 0 ? `最近召回 ${fmtTime(item.lastHit)}` : '还没被召回'}`),
                   h('button', {
                     type: 'button',
                     title: '删掉这一段（原文还在记忆里）',

@@ -1,3 +1,20 @@
+## 0.28.18（未发布）
+
+- **图谱真能用了**：`GET /dsh-whale-memory/graph` 支持 `?space=` / `?limit=`（默认 50，上限 200，超了截断不报错）/ `?sort=count|degree`；
+  每个实体带 `count` / `lastHit`（最近一次出现在哪条记忆，按 `t` 倒着扫现找）/ `degree`（整张图里连了几条边），
+  每条边带 `weight`（共现次数，老字段 `w` 一并留着）。老字段 `nodes` / `edges` / `total` / `omitted` 不变。
+  新增 `GET /dsh-whale-memory/graph/entity?name=X&space=&limit=`：返回这个实体最近几条记忆（`id, t, u, a`），查不到 404，空名 400。
+  查询全部走参数化 SQL；`lib/graph.mjs` 新增 `readGraph` / `recentLastHits` / `entityEntries`。
+- **设置页图谱 tab 改成列表**：空间下拉（读现成 `/spaces`）、实体/边统计、`count` ⇄ `degree` 排序切换；
+  每个实体一行（`N 条 · 度 K · 最近出现在 …`）、点开看最近 5 条记忆、下面列前 5 条边（`A ↔ B ×权重`，点对端切过去）。
+  删掉原来的力导向 SVG 布局（约 100 行手算坐标），空状态写明「还没攒够共现」和「边至少出现 2 次」的阈值。
+- **去掉空转的「最近触发」**：`lib/scenes.mjs` 的 `sceneHitMap` 依赖 `meta` 的 `sceneHit:*`，而唯一会写它的 `markHit` 从没被调用，
+  所以那行永远是空的。现在整块删掉（`sceneHitMap` / `hitKey` / `markHit`），改读真数据：
+  `ensureHitColumns` 给 `entries` 补 `lastHit` 列，`warmEntries` 在 `memory_recall` 真返回条目时写时间；
+  场景取名下 `entry_ids` 的最大值，文案改成「最近召回 HH:MM」/「还没被召回」。`lib/scenes.mjs` 新增 `sceneRecallAt`。
+- 测试：`test-routes.mjs` 覆盖图谱（字段 / space / limit 上限截断 / 排序 / 405 / entity 200·400·404）与场景「最近召回」；
+  `test-recall.mjs` 的 fixture 补 `lastHit` 列。文档：新增 `docs/GRAPH.md`，`README.md` 补接口一段。
+
 ## 0.28.17
 
 - **第二层自动落盘进仓库**：新增 `scripts/dump-group.mjs`（node 版，替代原型 py 脚本）。

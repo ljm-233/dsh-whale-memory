@@ -195,15 +195,19 @@ const post = (path, body) => new Promise((ok) => {
   console.log('OK 日记')
 }
 
-// ---- 场景：条数 / 最近触发 / 手动删一条 ----
+// ---- 场景：条数 / 最近召回 / 手动删一条 ----
 {
   const seed = new DatabaseSync(join(dir, 'memory.db'))
   const at = Date.now()
+  // 「最近召回」不再是 meta 里那枚从来没人写的键，而是「这一段名下记忆最后一次被召回」。
+  const add = seed.prepare('INSERT INTO entries (u,a,t,w,emo,hot,space,hits,tier,lastHit) VALUES (?,?,?,?,?,?,?,?,?,?)')
+  const recalled = Number(add.run('群里 bot 又不回了', '', at - 3000, 1, '[]', 0, 'default', 3, 1, at - 500).lastInsertRowid)
+  const quiet = Number(add.run('重打三个补丁', '', at - 2000, 1, '[]', 0, 'default', 0, 1, 0).lastInsertRowid)
+  const tired = Number(add.run('今天好累', '', at - 1000, 1, '[]', 0, 'default', 0, 1, 0).lastInsertRowid)
   seed.prepare('INSERT OR REPLACE INTO scenes (topic, body, entry_ids, n, updated, space) VALUES (?,?,?,?,?,?)')
-    .run('bot', '- 群里 bot 不回\n- 重打三个补丁', '[1,2]', 2, at, 'default')
+    .run('bot', '- 群里 bot 不回\n- 重打三个补丁', JSON.stringify([recalled, quiet]), 2, at, 'default')
   seed.prepare('INSERT OR REPLACE INTO scenes (topic, body, entry_ids, n, updated, space) VALUES (?,?,?,?,?,?)')
-    .run('加班', '- 今天好累\n- 那就早点睡', '[3,4]', 2, at - 1000, 'default')
-  seed.prepare("INSERT OR REPLACE INTO meta (k, v) VALUES ('sceneHit:default:bot', ?)").run(String(at - 500))
+    .run('加班', '- 今天好累\n- 那就早点睡', JSON.stringify([tired]), 1, at - 1000, 'default')
   seed.close()
 
   const list = await call('/dsh-whale-memory/scenes')
@@ -211,8 +215,8 @@ const post = (path, body) => new Promise((ok) => {
   assert.equal(list.body.total, 2)
   const bot = list.body.items.find((it) => it.topic === 'bot')
   assert.equal(bot.count, 2, '场景要报「多少条记忆」')
-  assert.equal(bot.lastHit, at - 500, '「最近一次触发」从 meta 读回来')
-  assert.equal(list.body.items.find((it) => it.topic === '加班').lastHit, 0, '没触发过就是 0，不编时间')
+  assert.equal(bot.lastHit, at - 500, '「最近召回」取这一段里最新的那次召回')
+  assert.equal(list.body.items.find((it) => it.topic === '加班').lastHit, 0, '没被召回过就是 0，不编时间')
   assert.equal((await call('/dsh-whale-memory/scenes', 'DELETE')).status, 405, '列表只读')
 
   const gone = await post('/dsh-whale-memory/scenes/delete', { topic: 'bot', space: 'default' })
@@ -246,19 +250,71 @@ const post = (path, body) => new Promise((ok) => {
   console.log('OK 画像与桌面页')
 }
 
-// ---- 图谱：超过 200 个点截断，但总数照实报 ----
+// ---- 图谱：字段 / 空间 / limit 与上限 / 排序 / 点一个实体看记忆 ----
 {
   const seed = new DatabaseSync(join(dir, 'memory.db'))
+  const at = Date.now()
   const ins = seed.prepare('INSERT OR REPLACE INTO entities (name, space, n, updated) VALUES (?,?,?,?)')
   for (let i = 0; i < 260; i += 1) ins.run(`实体${i}`, 'default', 3 + i, Date.now())
+  // 次数最高的一条，用来验「最近出现在哪条记忆」是从记忆里真找回来的。
+  ins.run('重启插件', 'default', 500, at)
+  ins.run('旁支', 'other', 9, at)
+  const edge = seed.prepare('INSERT OR REPLACE INTO edges (a, b, space, w, updated) VALUES (?,?,?,?,?)')
+  edge.run('实体259', '实体258', 'default', 5, at)
+  edge.run('实体259', '实体257', 'default', 3, at)
+  edge.run('实体259', '实体256', 'default', 2, at)
+  edge.run('实体258', '实体257', 'default', 1, at)
+  seed.prepare('INSERT INTO entries (u,a,t,w,emo,hot,space) VALUES (?,?,?,?,?,?,?)')
+    .run('重启插件之后就正常了', '记下', at - 100, 1, '[]', 0, 'default')
+  seed.prepare('INSERT INTO entries (u,a,t,w,emo,hot,space) VALUES (?,?,?,?,?,?,?)')
+    .run('重启插件又崩了一次', '再看', at - 5000, 1, '[]', 0, 'default')
   seed.close()
 
   const g = await call('/dsh-whale-memory/graph')
   assert.equal(g.status, 200)
-  assert.equal(g.body.nodes.length, 200, '最多给 200 个点')
-  assert.equal(g.body.total, 260, '总数照实报')
-  assert.equal(g.body.omitted, 60, '省略了多少要说清楚')
-  console.log('OK 图谱截断')
+  assert.equal(g.body.nodes.length, 50, '默认给 50 个实体')
+  assert.equal(g.body.total, 261, '总数照实报（这个空间里 261 个实体）')
+  assert.equal(g.body.omitted, 211, '省略了多少要说清楚')
+  assert.equal(g.body.space, 'default')
+  assert.equal(g.body.sort, 'count')
+
+  const top = g.body.nodes[0]
+  assert.equal(top.name, '重启插件', '默认按出现次数排')
+  assert.equal(top.count, 500)
+  assert.equal(top.lastHit, at - 100, '最近出现在哪条记忆，从记忆里找回来')
+  const star = g.body.nodes.find((n) => n.name === '实体259')
+  assert.equal(star.degree, 3, '度 = 连了几条边')
+  assert.equal(star.lastHit, 0, '没有记忆提过它就别编时间')
+  const link = g.body.edges.find((e) => e.a === '实体259' && e.b === '实体258')
+  assert.deepEqual({ w: link.w, weight: link.weight }, { w: 5, weight: 5 }, '边带共现次数，老字段 w 留着')
+
+  const byDegree = await call('/dsh-whale-memory/graph', 'GET', '?sort=degree')
+  assert.equal(byDegree.body.sort, 'degree')
+  assert.equal(byDegree.body.nodes[0].name, '实体259', '按度排，度数最大的那个在前')
+
+  const capped = await call('/dsh-whale-memory/graph', 'GET', '?limit=999')
+  assert.equal(capped.body.nodes.length, 200, '超上限就截断到 200，不报错')
+  assert.equal(capped.body.limit, 200)
+  assert.equal((await call('/dsh-whale-memory/graph', 'GET', '?limit=3')).body.nodes.length, 3)
+
+  const other = await call('/dsh-whale-memory/graph', 'GET', '?space=other')
+  assert.deepEqual(other.body.nodes.map((n) => n.name), ['旁支'], '空间之间不串')
+  assert.equal(other.body.total, 1)
+  assert.equal((await call('/dsh-whale-memory/graph', 'POST')).status, 405, '图谱只读')
+
+  const one = await call('/dsh-whale-memory/graph/entity', 'GET', `?name=${encodeURIComponent('重启插件')}&limit=5`)
+  assert.equal(one.status, 200)
+  assert.equal(one.body.name, '重启插件')
+  assert.equal(one.body.count, 2, '两条记忆提过它')
+  assert.ok(String(one.body.items[0].u).includes('重启插件'), '最近的那条排前面')
+  assert.deepEqual(Object.keys(one.body.items[0]).sort(), ['a', 'id', 't', 'u'])
+  assert.equal(one.body.items[0].t, at - 100)
+
+  const nope = await call('/dsh-whale-memory/graph/entity', 'GET', `?name=${encodeURIComponent('根本没有这个名字')}`)
+  assert.equal(nope.status, 404, '查不到就 404，别拿空数组冒充')
+  assert.equal((await call('/dsh-whale-memory/graph/entity', 'GET', '?name=')).status, 400, '没名字是坏请求')
+  assert.equal((await call('/dsh-whale-memory/graph/entity', 'POST')).status, 405)
+  console.log('OK 图谱')
 }
 
 // ---- 记忆工具：查与改错 ----

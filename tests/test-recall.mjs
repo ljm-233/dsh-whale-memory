@@ -33,7 +33,7 @@ const dir = mkdtempSync(join(tmpdir(), 'whale-recall-'))
 const freshDb = () => {
   const db = new DatabaseSync(':memory:')
   db.exec(`
-    CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, u TEXT, a TEXT, t INTEGER, w REAL DEFAULT 1, emo TEXT DEFAULT '[]', vec BLOB, hot INTEGER DEFAULT 1, space TEXT DEFAULT 'default', hits INTEGER DEFAULT 0, tier INTEGER DEFAULT 0, owner TEXT DEFAULT '');
+    CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, u TEXT, a TEXT, t INTEGER, w REAL DEFAULT 1, emo TEXT DEFAULT '[]', vec BLOB, hot INTEGER DEFAULT 1, space TEXT DEFAULT 'default', hits INTEGER DEFAULT 0, tier INTEGER DEFAULT 0, lastHit INTEGER NOT NULL DEFAULT 0, owner TEXT DEFAULT '');
     CREATE TABLE facts (id INTEGER PRIMARY KEY AUTOINCREMENT, f TEXT, space TEXT DEFAULT 'default',
       valid_from INTEGER NOT NULL DEFAULT 0, valid_until INTEGER);
     CREATE TABLE diary (day TEXT PRIMARY KEY, text TEXT, created_at INTEGER);

@@ -65,6 +65,13 @@ node scripts/check-all.mjs
 
 这几项的默认值只有一份：`lib/dump-config.mjs` 的 `LAYER_DEFAULTS`。
 
+**记忆内容**那一栏（热区 / 冷区 / 场景 / 画像 / 图谱 / 空间）是只读预览，接口都在 `http://127.0.0.1:3080/dsh-whale-memory/` 下：
+`status`、`entries`、`scenes`、`persona`、`graph`、`graph/entity`、`spaces`、`trend`、`timeline`、`conflicts`、`backups`。
+其中 **图谱** 是「谁和谁总一起出现」的共现统计：`GET /graph?space=&limit=&sort=` 给实体（`name/count/lastHit/degree`）与边（`a/b/weight`），
+`GET /graph/entity?name=&space=&limit=` 点进去看这个实体最近几条记忆（查不到 404）。
+算法、阈值（共现 ≥ 2 次才成边）、字段与页面形态见 `docs/GRAPH.md`。
+场景那行「最近召回」来自 `entries.lastHit`（`memory_recall` 真把条目交回模型时写），没被召回过就写「还没被召回」。
+
 ## 环境
 
 - Node 22+
