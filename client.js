@@ -950,7 +950,7 @@ window.__ModuleLoader__.load({
       const skip = rec !== null && rec.lastSkip && rec.lastSkip.reason
         ? `${String(rec.lastSkip.reason)}${rec.lastSkip.conf != null ? `（置信 ${Number(rec.lastSkip.conf).toFixed(2)}）` : ''}`
         : ''
-      const recent = Array.isArray(mood?.recent) ? mood.recent[0] : null
+      const recent = Array.isArray(mood?.recent) ? (mood.recent[0] ?? null) : null
       const hasMood = recent !== null && recent.mood !== undefined && recent.mood !== null && Number.isFinite(Number(recent.mood))
       const hot = status?.hot
       const cold = status?.cold
@@ -2385,7 +2385,7 @@ window.__ModuleLoader__.load({
           : ''
         const taskOpen = memoryStatus?.taskStack?.open
         // 「它现在怎么想我」和诊断区都要这两样：情绪那一格、安装副本那一格。
-        const moodRec = Array.isArray(moodNow?.recent) ? moodNow.recent[0] : null
+        const moodRec = Array.isArray(moodNow?.recent) ? (moodNow.recent[0] ?? null) : null
         const inst = memoryStatus?.install ?? null
         const chips = statusChipsOf(memoryStatus, moodNow, capRaw)
         const statusBar = h('div', {
