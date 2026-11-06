@@ -1441,8 +1441,14 @@ window.__ModuleLoader__.load({
               style: {
                 fontSize: '11px', padding: '1px 4px', borderRadius: '4px',
                 border: '1px solid currentColor', background: 'transparent', color: 'inherit',
+                // 原生下拉弹出层由浏览器画，默认浅色底；不钉死文字色就会白底白字。
+                colorScheme: 'light',
               },
-            }, ...opts.map((o) => h('option', { key: String(o.value), value: String(o.value) }, o.label ?? String(o.value))))
+            }, ...opts.map((o) => h('option', {
+              key: String(o.value),
+              value: String(o.value),
+              style: { color: '#111', background: '#fff' },
+            }, o.label ?? String(o.value))))
           }
           if (field.kind === 'bool') {
             const checked = shown === true
@@ -2013,8 +2019,10 @@ window.__ModuleLoader__.load({
                       value: graphEdges,
                       onChange: (e) => setGraphEdges(Number(e.target.value)),
                       title: '画权重最高的前几条边',
-                      style: { fontSize: '11px', padding: '1px 4px', borderRadius: '4px', border: '1px solid currentColor', background: 'transparent', color: 'inherit' },
-                    }, ...[40, 80, 120, 200, 400].map((n) => h('option', { key: n, value: n }, `${n} 条`)))),
+                      style: { fontSize: '11px', padding: '1px 4px', borderRadius: '4px', border: '1px solid currentColor', background: 'transparent', color: 'inherit', colorScheme: 'light' },
+                    }, ...[40, 80, 120, 200, 400].map((n) => h('option', {
+                      key: n, value: n, style: { color: '#111', background: '#fff' },
+                    }, `${n} 条`)))),
               ),
               // 图/列表上方那行统计：实体、边、这次实际画了几条，一眼对得上画面。
               nodes.length === 0
