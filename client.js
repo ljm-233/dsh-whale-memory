@@ -2445,16 +2445,14 @@ window.__ModuleLoader__.load({
             h('span', { style: { fontSize: '12px', fontWeight: 600 } }, '这一轮它会带什么进上下文'),
             h('span', { style: { fontSize: '10px', opacity: 0.45 } }, '只读预览 · 这里不能改'),
           ),
-          previewLine('记忆卡', `已注入 ${injectToday}${capText || ' 次'} · 卡片 ${injectRec.lastChars ? `${injectRec.lastChars} 字` : '还没交出去过'}`
-            + (lastSkip === '' ? '' : ` · 上次被拦下：${lastSkip}`)),
-          previewLine('在身上的', `热区 ${memoryStatus.hot ?? 0} 条 · 事实 ${memoryStatus.facts ?? 0} 条 · 场景 ${memoryStatus.scenes ?? 0} 段 · 日记 ${memoryStatus.diary ?? 0} 篇`),
-          previewLine('能想起来', `最多 ${pick(snaps.memory.value, ['recallMax']) ?? DASH} 条/轮 · 公式 ${memoryStatus.axes?.mode ?? DASH} · 场景 ${memoryStatus.axes?.scene ?? DASH}（门槛 ${memoryStatus.axes?.threshold ?? DASH}）`),
-          previewLine('情绪', moodRec
-            ? `${Math.round(Number(moodRec.mood))} / 100 · 上次开口：${String(moodRec.reason ?? '').slice(0, 60)}`
-            : '还没有记账'),
-          previewLine('任务栈', taskOpen === undefined || taskOpen === 0
-            ? '空（NEXT.md 里没有未完成项，或还没同步）'
-            : `${taskOpen} 条 · 栈顶：${(memoryStatus.taskStack?.top ?? []).map((t) => t.title).slice(0, 3).join(' / ')}`),
+          // 五行压两行（2026-11-07）：原来「记忆卡/在身上的/能想起来/情绪/任务栈」各占一行，
+          // 和上面那条状态条重复；现在合成「这一轮带什么」+「它现在什么状态」两句。
+          previewLine('这一轮', `卡 ${injectToday}${capText || ' 次'}${injectRec.lastChars ? ` · ${injectRec.lastChars} 字` : ''}`
+            + ` · 召回 ≤${pick(snaps.memory.value, ['recallMax']) ?? DASH} 条（${memoryStatus.axes?.scene ?? DASH} 场景）`
+            + (taskOpen ? ` · 手上 ${taskOpen} 条` : '')
+            + (lastSkip === '' ? '' : ` · 上次拦下：${lastSkip}`)),
+          previewLine('身上', `热区 ${memoryStatus.hot ?? 0} · 事实 ${memoryStatus.facts ?? 0} · 场景 ${memoryStatus.scenes ?? 0} · 日记 ${memoryStatus.diary ?? 0}`
+            + ` · 情绪 ${moodRec ? `${Math.round(Number(moodRec.mood))}` : DASH}`),
           )
 
         // ───────────── 危险与诊断：诊断统计（折叠里） ─────────────
