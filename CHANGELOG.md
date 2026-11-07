@@ -1,5 +1,15 @@
+## 0.28.20（未发布）
+
+- **情绪开始参与说话**：注入那一行从「只描述状态」改成「状态 + 一句行为指令」，四档按 mood 分界（≤35 / 36–45 / 46–60 / ≥61），指令优先、预算紧时先砍描述，整行仍 ≤40 字不带数字。`lib/mood.mjs` 新增 `DIRECTIVE_TIERS` / `moodDirective()`，`buildSelfLine()` 负责拼。
+- **闸门放宽但不吵**：`MOOD_INJECT_DAILY_MAX` 2→4、`MOOD_INJECT_MIN_DELTA` 8→6，冷却 3 小时不变（`lib/constants.mjs`）。
+- **自唤醒（systemd 那条线）**：`miyu-wake` profile + `wake-run.sh` + 用户级 timer，30 分钟问一次；发送改「模型写 `wake/out.txt` → 脚本校验 → 投递」，素材取当天账本日记，`wake/said.json` 去重；设置页新增「自唤醒」七项（`wakeSelf.*`），`dump-config` 暴露。
+- **冷区候选窗口**：`lib/recall.mjs` ≤300 全取、超过则「最近 200 + 随机 100」。
+- **person 三修**：自动建档、`person_alias` 多号合并、`openid_full` 回填。
+- 界面：下拉白底白字、状态条空数组崩溃、设置页第一页五行压两行。
+
 ## 0.28.19（未发布）
 
+- **情绪那句话从「记账」变成「指导」**：`buildSelfLine()` 原来是纯状态描述（`今天有点沉。`），模型读到不会改语气。现在拼成「状态描述 + 一句行为指令」，四档见 `lib/mood.mjs` 的 `DIRECTIVE_TIERS` / `moodDirective()`：≤35 `句子短一点，别逞强，也别反过来讨好`、36–45 `话可以少，但别冷`、46–60 `照常说话`、≥61 `有精神，可以多说两句，别飘`。合起来仍是一行、≤40 字、不带数字（`MOOD_LINE_CAP`），指令优先、预算紧先砍描述；沉/累时行尾那句 `（不想做可以说）` 照旧。闸门同步放宽但不吵：`MOOD_INJECT_DAILY_MAX` 2→4、`MOOD_INJECT_MIN_DELTA` 8→6、冷却 3 小时不动（设置项仍只读 `lib/constants.mjs` 那一份默认值）。`order: 950`、记忆卡 1000 字预算、`mood_log` 表结构都没动。`tests/test-mood.mjs` 新增 D1–D4 四组（四档分界与指令原文 / 四档都拼进那一行 / 11 档 × 4 组维度全 ≤40 字且不含数字 / 默认值落在闸上的边界），`npm test` 全绿。
 - **自唤醒（systemd 那条线）**：新 profile `miyu-wake`（只带模型+凭证）+ `scripts/wake-run.sh`（静默时段／90 分冷却／日限 3／掷骰命中率）+ 用户级 timer 每 30 分钟问一次；发送改成「模型写 `wake/out.txt` → 脚本校验 → 投递」，素材取当天账本与日记（`wake/today.txt`），并用 `wake/said.json` 去重。设置页新增「自唤醒」一栏（`wakeSelf.*` 七项），`lib/dump-config.mjs` 暴露这一组。
 - **冷区候选窗口**：`lib/recall.mjs` 原来恒取最近 300 条，真库全在七天内 ⇒ `time` 轴恒 1.00。改成 ≤300 全取、超过则「最近 200 + 随机 100」。
 - **person 表三修**：`ensurePersonRow()` 遇到新 `spk` 自动建档（name 留空、source=auto，不覆盖已有名字）；新表 `person_alias` 支持一人多号（`D073B690 → E8721C3C`），「人」页按 canonical 合并；`person` 增 `openid_full` 列 + `scripts/backfill-person-openid.mjs`（默认 dry-run），实库已回填 7 行。

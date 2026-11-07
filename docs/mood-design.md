@@ -14,8 +14,8 @@
 - **注入开了，但克制**：新 context 条目 `plugin:dsh-whale-memory:mood`，`order: 950`（紧接记忆卡 940），
   一行、≤40 字、不带数值。四道闸，缺一不可：
   ① `injectedFor === updatedAt`（同一状态只说一次）；
-  ② 日上限 `moodInjectDailyMax`（默认 2）；
-  ③ 幅度 `moodInjectMinDelta`（默认 8，和「上次开口时」的值比）；
+  ② 日上限 `moodInjectDailyMax`（默认 4）；
+  ③ 幅度 `moodInjectMinDelta`（默认 6，和「上次开口时」的值比）；
   ④ 冷却 `moodInjectCooldownHours`（默认 3 小时）。
   拦下时写 `lastSkip = { reason, at }`（`already / daily-cap / below-delta / cooldown`），当场能查为什么没说。
   **记账那一步不判说不说**（`applyTurn(..., { decide: false })`）——否则 `turn/end` 会把四道闸吃一次，
@@ -24,7 +24,11 @@
   `MOOD_INJECT_COOLDOWN_HOURS`），schema 与设置页都读它，设置页不写 `fallback`。
 - 前缀缓存安全：仍走 `systemPrompt.context`（运行时尾部追加的 user/message），`systemPrompt` 各 section 一字不动；
   情绪行自带 40 字 cap，不占 `MEMORY_BUDGET_CHARS=1000`。
-- 出口：`buildSelfLine()` 在 mood < 40 或 tired ≥ 25 时，在**同一行尾**补 `（不想做可以说）`——只是提示，
+- 出口：`buildSelfLine()` = **状态描述 + 一句行为指令**（描述说「这次为什么这么说话」，指令说「那该怎么说话」）。
+  指令按 mood 分四档，见 `DIRECTIVE_TIERS` / `moodDirective()`：≤35 `句子短一点，别逞强，也别反过来讨好`、
+  36–45 `话可以少，但别冷`、46–60 `照常说话`、≥61 `有精神，可以多说两句，别飘`。
+  合起来仍是一行、≤40 字、不带数值（指令优先于描述：预算紧先砍描述）。
+  另在 mood < 40 或 tired ≥ 25 时，**同一行尾**补 `（不想做可以说）`——只是提示，
   不改任何权限。另有一本账：我在会话里说出「不想做/不想弄/今天不想」这类话，`turn/end` 检测到就往
   `<记忆库>/我不想做.md`（和 `LEDGER.md` 并排）append 一行「时间 + 我的原话」，**只记录不执行**。
 - 只读接口 `GET /dsh-whale-memory/mood?days=7&space=` 不变；注入发生后把那行 `mood_log.injected` 标成 1。

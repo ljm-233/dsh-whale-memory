@@ -15,9 +15,12 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   applyMoodTurn, applyTurn, buildSelfLine, decay, ensureMoodTable, initState, judgeSelf, judgeUser,
-  loadState, logTurn, matchUnwilling, note, saveState, say,
-  BASE_MOOD, DIMS, HINT,
+  loadState, logTurn, matchUnwilling, moodDirective, note, saveState, say,
+  BASE_MOOD, DIRECTIVE_TIERS, DIMS, HINT, PER_DAY,
 } from '../lib/mood.mjs'
+import {
+  MOOD_INJECT_COOLDOWN_HOURS, MOOD_INJECT_DAILY_MAX, MOOD_INJECT_MIN_DELTA, MOOD_LINE_CAP,
+} from '../lib/constants.mjs'
 import { apply } from '../lib/index.mjs'
 
 const T0 = new Date(2026, 10, 5, 14, 0, 0).getTime() // 本地 2026-11-05 14:00
@@ -114,7 +117,7 @@ test('B1 闸①：同一状态只说一次（连着渲 5 次也只有 1 次开�
   const s = st({ mood: 70, lastInjectMood: BASE_MOOD, saidAt: [] })
   const one = say(s, T0 + 1000)
   assert.equal(one.inject.yes, true)
-  assert.equal(one.inject.text, '今天轻快些。')
+  assert.equal(one.inject.text, '今天轻快些。有精神，可以多说两句，别飘')
   for (let i = 2; i <= 5; i += 1) {
     const again = say(one.state, T0 + 1000 * i)
     assert.equal(again.inject.yes, false, `第 ${i} 次不该再说话`)
@@ -150,12 +153,82 @@ test('B4 闸④：距上次开口不到冷却时间 → cooldown', () => {
   assert.equal(say(s, T0 + 3 * 3600_000, { cooldownHours: 3 }).inject.yes, true)
 })
 
+test('D1 四档指令：分界 ≤35 / 36–45 / 46–60 / ≥61，各命中一句正确的', () => {
+  const [low, midLow, mid, high] = DIRECTIVE_TIERS.map((t) => t.text)
+  assert.deepEqual(DIRECTIVE_TIERS.map((t) => t.max), [35, 45, 60, 100], '分界值')
+  // 边界扎在两侧：35→低、36→中低、45→中低、46→中、60→中、61→高
+  assert.equal(moodDirective(35), low)
+  assert.equal(moodDirective(36), midLow)
+  assert.equal(moodDirective(45), midLow)
+  assert.equal(moodDirective(46), mid)
+  assert.equal(moodDirective(60), mid)
+  assert.equal(moodDirective(61), high)
+  // 档内取值同样对得上（极值也不跑偏）
+  for (const m of [0, 20, 34]) assert.equal(moodDirective(m), low, `mood=${m} 该走低档`)
+  for (const m of [40, 44]) assert.equal(moodDirective(m), midLow, `mood=${m} 该走中低档`)
+  for (const m of [50, 59]) assert.equal(moodDirective(m), mid, `mood=${m} 该走中档`)
+  for (const m of [70, 100]) assert.equal(moodDirective(m), high, `mood=${m} 该走高档`)
+  // 四档互不相同，且都是「能照着做」的句子（不是状态描述）
+  assert.equal(new Set([low, midLow, mid, high]).size, 4)
+  assert.equal(low, '句子短一点，别逞强，也别反过来讨好')
+  assert.equal(midLow, '话可以少，但别冷')
+  assert.equal(mid, '照常说话')
+  assert.equal(high, '有精神，可以多说两句，别飘')
+})
+
+test('D2 四档都拼进那一行：各档的指令原样出现', () => {
+  const line = (mood) => buildSelfLine(st({ mood, dims: { ...initState().dims } }))
+  assert.ok(line(20).includes('句子短一点，别逞强，也别反过来讨好'), line(20))
+  assert.ok(line(40).includes('话可以少，但别冷'), line(40))
+  assert.ok(line(52).includes('照常说话'), line(52))
+  assert.ok(line(70).includes('有精神，可以多说两句，别飘'), line(70))
+  // 状态描述还在（「这次为什么这么说话」），没有被指令挤掉
+  assert.ok(line(20).startsWith('今天很低。'), line(20))
+  assert.ok(line(70).startsWith('今天轻快些。'), line(70))
+})
+
+test('D3 拼出来的一行：≤40 字、不带数字（四档 × 带不带 accent × 带不带提示）', () => {
+  const dimSets = [
+    { ...initState().dims },                                  // 不带 accent、不触发提示
+    { ...initState().dims, care: 50 },                        // 带 accent
+    { ...initState().dims, tired: 30 },                       // 累 → 带提示
+    { ...initState().dims, sad: 60, tired: 40 },              // 又沉又累 → 最长的那种
+  ]
+  for (const mood of [0, 20, 35, 36, 45, 46, 60, 61, 70, 85, 100]) {
+    for (const dims of dimSets) {
+      const line = buildSelfLine(st({ mood, dims }))
+      assert.ok(line.length <= MOOD_LINE_CAP, `超了上限：${line}（${line.length}）`)
+      assert.ok(line.length > 0, `不能是空行：mood=${mood}`)
+      assert.ok(!/[0-9]/u.test(line), `不带数值：${line}`)
+      assert.ok(!line.includes('\n'), `必须是一行：${line}`)
+      assert.ok(line.includes(moodDirective(mood)), `四档指令要在里面：${line}`)
+    }
+  }
+})
+
+test('D4 闸门的默认值：一天 4 次、动 6 格、冷却 3 小时（常量只写一处）', () => {
+  assert.equal(MOOD_INJECT_DAILY_MAX, 4)
+  assert.equal(MOOD_INJECT_MIN_DELTA, 6)
+  assert.equal(MOOD_INJECT_COOLDOWN_HOURS, 3)
+  assert.equal(PER_DAY, MOOD_INJECT_DAILY_MAX, '旧名跟着走')
+  // 默认值真的落在闸上：今天说过 3 次、且都过了冷却 → 第 4 次还能说；满 4 次就只记账
+  const h = 3600_000
+  const three = st({ mood: 70, lastInjectMood: BASE_MOOD, saidAt: [T0 - 4 * h, T0 - 4 * h + 1, T0 - 4 * h + 2] })
+  assert.equal(say(three, T0).inject.yes, true, '第 4 次还能说')
+  const four = st({ mood: 70, lastInjectMood: BASE_MOOD, saidAt: [T0 - 5 * h, T0 - 4 * h, T0 - 4 * h + 1, T0 - 4 * h + 2] })
+  assert.equal(say(four, T0).inject.why, 'daily-cap', '满 4 次就只记账')
+  // 动 6 格就算够：48 → 54 说得出去，48 → 53 还不说
+  assert.equal(say(st({ mood: 54, lastInjectMood: BASE_MOOD, saidAt: [] }), T0 + 1000).inject.yes, true)
+  assert.equal(say(st({ mood: 53, lastInjectMood: BASE_MOOD, saidAt: [] }), T0 + 1000).inject.why, 'below-delta')
+})
+
 test('文案：一行、≤40 字、不带数字；沉或累时带「（不想做可以说）」', () => {
   const line = buildSelfLine(st({ mood: 70, dims: { ...initState().dims, care: 50 } }))
-  assert.ok(line.length <= 40, `一行的硬上限：${line}（${line.length}）`)
+  assert.ok(line.length <= MOOD_LINE_CAP, `一行的硬上限：${line}（${line.length}）`)
   assert.ok(!/[0-9]/u.test(line), `不带数值：${line}`)
-  assert.equal(buildSelfLine(st({ mood: 34, dims: { ...initState().dims, tired: 30 } })), `今天有点沉，还累。${HINT}`)
-  assert.ok(buildSelfLine(st({ mood: 70 })).endsWith('。'))
+  assert.equal(buildSelfLine(st({ mood: 34, dims: { ...initState().dims, tired: 30 } })),
+    `今天有点沉，还累。${moodDirective(34)}${HINT}`)
+  assert.ok(buildSelfLine(st({ mood: 70 })).startsWith('今天轻快些。'))
   assert.ok(!buildSelfLine(st({ mood: 70 })).includes(HINT), '不沉不累就不带那句提示')
 })
 
@@ -254,7 +327,7 @@ test('端到端 B：连着渲染 5 次 context 条目 → 只注入 1 次（mood
     const shown = []
     for (let i = 0; i < 5; i += 1) shown.push(desc.text({}))
     assert.equal(shown.filter((t) => t !== '').length, 1, `5 次渲染只能开口 1 次：${JSON.stringify(shown)}`)
-    assert.equal(shown[0], '今天轻快些。')
+    assert.equal(shown[0], '今天轻快些。有精神，可以多说两句，别飘')
     assert.equal(db.prepare('SELECT COUNT(*) c FROM mood_log WHERE injected=1').get().c, 1, '注入要标在账上')
     assert.equal(loadState(db, 'default', now).saidAt.length, 1)
   } finally { db.close() }
