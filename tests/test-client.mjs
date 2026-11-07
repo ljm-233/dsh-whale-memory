@@ -193,9 +193,10 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
   const fields = G.flatMap((g) => g.fields)
   const core = fields.filter((f) => f.tier === 'core')
   const coreActions = A.filter((a) => a.tier === 'core')
-  assert.ok(fields.length === 40, '一共 40 个设置项（数量不变，只分层）')
+  // 2026-11-07：加了「自唤醒（systemd）」一组 7 项 ⇒ 40 → 47
+  assert.ok(fields.length === 47, '一共 47 个设置项（数量不变，只分层）')
   assert.ok(core.length + coreActions.length <= 14, '常用区合计 ≤14 项')
-  assert.equal(core.length + coreActions.length, 13, '常用 13 项（12 个字段 + 备份按钮）')
+  assert.equal(core.length + coreActions.length, 14, '常用 14 项（13 个字段 + 备份按钮）')
   for (const key of ['budgetChars', 'space', 'recentPairs', 'cardDailyMax', 'recallMax',
     'moodEnabled', 'moodInjectDailyMax', 'groupDump.enabled', 'groupDump.intervalMinutes', 'weekly.enabled']) {
     assert.ok(core.some((f) => f.path.join('.') === key), `${key} 应该在常用里`)
@@ -204,7 +205,7 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
   // 高级默认折叠：没点之前，高级里的东西一个都不渲染
   assert.ok(html.includes('高级（3 项）'), '现在区的高级入口')
   assert.ok(html.includes('高级（14 项）'), '记忆怎么收的高级入口')
-  assert.ok(html.includes('高级（7 项）'), '怎么被叫醒的高级入口')
+  assert.ok(html.includes('高级（13 项）'), '怎么被叫醒的高级入口')
   assert.ok(html.includes('高级（6 项）'), '诊断区的高级入口')
   assert.ok(!html.includes('收起高级'), '默认是折叠的')
   for (const hidden of ['打分公式', '自动写日记', '导出目录', '影子模式', '免打扰起点', '心情半衰期', '热区条数上限']) {
@@ -332,7 +333,7 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
     return { core, adv }
   }
   assert.deepEqual(Z.map((z) => countOf(z.id)), [
-    { core: 2, adv: 3 }, { core: 8, adv: 14 }, { core: 0, adv: 0 }, { core: 0, adv: 0 }, { core: 2, adv: 7 }, { core: 1, adv: 6 },
+    { core: 2, adv: 3 }, { core: 8, adv: 14 }, { core: 0, adv: 0 }, { core: 0, adv: 0 }, { core: 3, adv: 13 }, { core: 1, adv: 6 },
   ], '六页的常用/高级项数（记忆内容与「人」两页没有配置项）')
   assert.ok(Z.every((z) => countOf(z.id).core <= 14), '每页常用 ≤14 项')
 }
@@ -445,12 +446,12 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
 // ---- 写入路径 ----
 // 路径 → 写法的映射是纯函数，直接调，不用模拟点击。
 const { writePath, resetPath, normalizeNumber, GROUPS, writeStateOf } = plugin.__test
-assert.equal(GROUPS.length, 12, '按「我要干什么」分成 12 个小节')
+assert.equal(GROUPS.length, 13, '按「我要干什么」分成 13 个小节（2026-11-07 加自唤醒）')
 assert.equal(new Set(GROUPS.map((g) => g.zone)).size, 4, '四区：现状 / 收 / 叫醒 / 诊断')
-assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 10, '记忆十组（含「入库取舍」与「打分与调试」）')
+assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 11, '记忆十一组（含「入库取舍」「打分与调试」「自唤醒」）')
 assert.ok(GROUPS.find((g) => g.title === '注入与空间').fields.some((f) => f.path.join('.') === 'space'), '空间字段落在注入与空间这一组')
 assert.equal(GROUPS.filter((g) => g.form === 'proactive').length, 2, '主动消息两组')
-assert.equal(GROUPS.flatMap((g) => g.fields).length, 40, '一共 40 个设置项（含 admitShadow / speakerEnabled）')
+assert.equal(GROUPS.flatMap((g) => g.fields).length, 47, '一共 47 个设置项（含 admitShadow / speakerEnabled / wakeSelf）')
 // 每一项都要「一行说明 + 一段长解释」，另外带 tier（常用/高级）。
 for (const field of GROUPS.flatMap((g) => g.fields)) {
   assert.ok(typeof field.desc === 'string' && field.desc.length > 0, `${field.path.join('.')} 缺一行说明`)
