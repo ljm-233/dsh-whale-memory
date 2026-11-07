@@ -1,3 +1,10 @@
+## 0.28.19（未发布）
+
+- **自唤醒（systemd 那条线）**：新 profile `miyu-wake`（只带模型+凭证）+ `scripts/wake-run.sh`（静默时段／90 分冷却／日限 3／掷骰命中率）+ 用户级 timer 每 30 分钟问一次；发送改成「模型写 `wake/out.txt` → 脚本校验 → 投递」，素材取当天账本与日记（`wake/today.txt`），并用 `wake/said.json` 去重。设置页新增「自唤醒」一栏（`wakeSelf.*` 七项），`lib/dump-config.mjs` 暴露这一组。
+- **冷区候选窗口**：`lib/recall.mjs` 原来恒取最近 300 条，真库全在七天内 ⇒ `time` 轴恒 1.00。改成 ≤300 全取、超过则「最近 200 + 随机 100」。
+- **person 表三修**：`ensurePersonRow()` 遇到新 `spk` 自动建档（name 留空、source=auto，不覆盖已有名字）；新表 `person_alias` 支持一人多号（`D073B690 → E8721C3C`），「人」页按 canonical 合并；`person` 增 `openid_full` 列 + `scripts/backfill-person-openid.mjs`（默认 dry-run），实库已回填 7 行。
+- 下拉框白底白字（`client.js`）与状态条空数组崩溃（`recent[0] ?? null`）两处修复归入本版。
+
 ## 0.28.18（未发布）
 
 - **认人表三处补丁：自动建档 / 多号合并 / 完整 openid。** ①写入路径自动建档：新增 `speaker.ensurePersonRow(db, spk, space, now)`（`INSERT … ON CONFLICT(spk, space) DO NOTHING`，`name` 留空串、`source='auto'`、`score=1` 跟建表默认一致、`updated` 当前毫秒、`space` 跟随该条记忆），挂在 `lib/writer.mjs` 落库成功后与 `scripts/backfill-speakers.mjs --apply` 的每次 `spk` 更新上——**已有行的 name/aka/source 一个字不动**，空串（不知道谁说的）不建档。②多号合并：新表 `person_alias(space, spk, canonical_spk)`（幂等建表，老库无表就不归并），`lib/people.mjs` 的 `listPeople` 按 canonical 合并条目数与最近时间、两行认人表归一成一行（名字取第一个非空的、又名并集），`personEntries` 展开一个人时查全组号；真库实测 `7 个人` → `6 个人`（`D073B690 → E8721C3C` 都是 ARK），ARK 条数 50+7 合成 68，覆盖率分子跟着合并后的口径走。③完整 openid：`person` 加 `openid_full TEXT`（可空，前 8 位仍是主键），老库用 `pragma_table_info` 探测后 `ALTER TABLE ADD COLUMN`；新脚本 `scripts/backfill-person-openid.mjs` 从群档 `messages.sender_id` 取 32 位 id，只认唯一命中、只填空（有值且不同报「冲突」不覆盖），默认 `--dry-run`、`--apply` 幂等（真库实测首次 `实写: 7 行`，二次 `将要回填 0 行`）。测试 `tests/test-people.mjs` 新增三组（自动建档不覆盖名字·不重复插·空号不建 / alias 归并后人数减一且条目数合并、删映射回原样 / openid dry-run 不写·apply 写 1 行·二次写 0 行），`npm test` 全绿。

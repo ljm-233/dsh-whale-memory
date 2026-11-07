@@ -1,6 +1,6 @@
 {
   "name": "dsh-whale-memory",
-  "version": "0.28.18",
+  "version": "0.28.19",
   "type": "module",
   "private": false,
   "description": "Proactive memory for DeepSeek Harness: emotion-aware recall, real BGE vectors, SQLite storage, and periodic associative rumination. Zero JS dependencies.",
