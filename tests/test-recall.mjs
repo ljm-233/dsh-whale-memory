@@ -18,7 +18,7 @@ const { DatabaseSync } = await import('node:sqlite')
 const { mkdtempSync, writeFileSync } = await import('node:fs')
 const { tmpdir } = await import('node:os')
 const { join } = await import('node:path')
-const { createRecall } = await import('../lib/recall.mjs')
+const { createRecall, coldPoolOf, kwArmOf, kwTermsOf } = await import('../lib/recall.mjs')
 const { cardLine } = await import('../lib/format.mjs')
 const { RECALL_CARD_MAX, RECALL_SECTION_CAP } = await import('../lib/constants.mjs')
 
@@ -497,9 +497,10 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
     console.log = realLog
   }
 
+  // 0.28.21：rel 0.55→0.65、imp 0.25→0.15（imp 让「被想过的」压过「说得对的」，见 axes.mjs 注释）
   check('axesDebug 打出场景与权重（含半衰与门槛）',
     Boolean(recall.header) && recall.header.includes('scene=recall')
-    && recall.header.includes('w=rel0.55/imp0.25/time0.2') && recall.header.includes('半衰=30天'),
+    && recall.header.includes('w=rel0.65/imp0.15/time0.2') && recall.header.includes('半衰=30天'),
     recall.header)
   check('recall 场景两条都过线、旧的排前',
     recall.rows.length === 2 && recall.rows[0].id === tailOf(idOld) && recall.rows[0].score > recall.rows[1].score,
@@ -529,6 +530,46 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
     await quiet.associate('s-axes-quiet', Q)
     check('axesDebug 默认关：不打分解', logs.filter((l) => l.includes('三轴分解')).length === 0)
   }
+}
+
+// ---- 15. 候选池的三条臂：老条目进不了「最近 200」，也要靠关键词臂捞回来 ----
+//
+// 0.28.21 前池子只有「最近 200 + 随机 100」：真库冷区 2300+ 条时，一条十天前的旧事
+// 每轮被随机抽中的概率 ~4%，于是「十天前说过什么」在候选池这一层就丢了（跟打分无关）。
+{
+  const pdb = freshDb()
+  const ins = pdb.prepare('INSERT INTO entries (u,a,t,w,emo,vec,hot,space) VALUES (?,?,?,?,?,?,?,?)')
+  // 最老的一条：唯一带「乘法表 / builtins」这些词
+  ins.run('用户用 Python 拼接 builtins 文档字符，调试乘法表代码', '嗯', now - 9 * 86400000, 1, '[]', null, 0, 'default')
+  const idOld = Number(pdb.prepare('SELECT last_insert_rowid() AS id').get().id)
+  // 320 条新的、跟这个问题毫无关系的，把「最近 200」占满
+  for (let i = 0; i < 320; i += 1) ins.run(`第 ${i} 条无关的日常闲聊`, '好', now - i * 1000, 1, '[]', null, 0, 'default')
+
+  const recentIds = new Set(pdb.prepare('SELECT id FROM entries WHERE hot=0 AND space=? ORDER BY t DESC LIMIT 200')
+    .all('default').map((r) => Number(r.id)))
+  check('前提：老条目不在「最近 200」里', !recentIds.has(idOld), String(idOld))
+
+  const terms = kwTermsOf('以前那段调试乘法表的代码还记得吗')
+  check('关键词臂取到 4 字与 2 字的词', terms.some((w) => w.length === 4) && terms.some((w) => w.length === 2),
+    JSON.stringify(terms))
+  check('关键词臂不超过 14 个词', terms.length <= 14, String(terms.length))
+
+  const pool = coldPoolOf(pdb, 'default', '以前那段调试乘法表的代码还记得吗')
+  const ids = new Set(pool.stmt.all(...pool.args).map((r) => Number(r.id)))
+  check('关键词臂把老条目捞进候选池', ids.has(idOld), `池 ${ids.size} 条`)
+  check('池子不止「最近 200 + 随机」，还多了关键词那一段', ids.size > 200, String(ids.size))
+
+  // 只量关键词臂本身（整池里还混着随机 100，抽中不抽中是随机的，不能拿来断言）
+  const armIds = (text) => {
+    const arm = kwArmOf('default', kwTermsOf(text))
+    if (arm === null) return new Set()
+    return new Set(pdb.prepare(arm.sql).all(...arm.args).map((r) => Number(r.id)))
+  }
+  check('关键词臂命中老条目', armIds('以前那段调试乘法表的代码还记得吗').has(idOld))
+  check('无关的话关键词臂不会捞它（臂是按词走的，不是恒开）', !armIds('今天的风挺大的').has(idOld))
+
+  // LIKE 通配符不许从用户的话里漏进 SQL
+  check('词里不留 LIKE 通配符', kwTermsOf('100%_test').every((w) => !w.includes('%') && !w.includes('_')))
 }
 
 console.log(`\n通过 ${pass}，失败 ${fail}`)
