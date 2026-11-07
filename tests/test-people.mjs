@@ -15,9 +15,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
+import { spawnSync } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { apply } from '../lib/index.mjs'
 import { listPeople, personEntries, coverageOf, PEOPLE_MAX, PEOPLE_ENTRIES_MAX } from '../lib/people.mjs'
+import { ensurePersonRow, ensureSpeakerColumns } from '../lib/speaker.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const dir = mkdtempSync(join(tmpdir(), 'wm-people-'))
@@ -275,6 +277,89 @@ put('也不知道谁说的', '', t0 - 6000)
   assert.ok(lowText.indexOf('2 个人') < lowText.indexOf('覆盖率 53.6%'), '灰字在统计行下面')
   assert.ok(lowText.indexOf('覆盖率 53.6%') < lowText.indexOf('ljm'), '灰字在名单上面')
   console.log('OK 「人」页渲染')
+}
+
+// ---- 7) 自动建档：新号补一行空名字的，已有行一个字不动 ----
+{
+  const N = 'F00D1234'
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM person WHERE spk = ?').get(N).c, 0, '这个号先不存在')
+  assert.equal(ensurePersonRow(db, N, 'default', 1700000000000), true, '新号补了一行')
+  const row = db.prepare('SELECT * FROM person WHERE spk = ?').get(N)
+  assert.equal(row.name, '', '名字留空串')
+  assert.equal(row.source, 'auto', 'source 记 auto')
+  assert.equal(row.score, 1, 'score 跟建表默认一致')
+  assert.equal(row.updated, 1700000000000, 'updated 用传进来的毫秒')
+  assert.equal(String(row.space), 'default', 'space 跟随那条记忆')
+  assert.equal(ensurePersonRow(db, N, 'default', 1700000001000), false, '已有的号不重复插')
+  assert.equal(db.prepare('SELECT updated FROM person WHERE spk = ?').get(N).updated, 1700000000000, '已有行一个字不动')
+  // 有名字的行：写入路径路过也不许覆盖 name / aka / source。
+  ensurePersonRow(db, 'AAAA1111', 'default', 1700000002000)
+  const ljm = db.prepare("SELECT name, aka, source FROM person WHERE spk = 'AAAA1111'").get()
+  assert.equal(ljm.name, 'ljm', '名字不许被空串顶掉')
+  assert.equal(ljm.aka, '["ljm_QvQ","宝宝"]', '又名不许被清空')
+  assert.equal(ljm.source, 'manual', '来源不许被改成 auto')
+  assert.equal(ensurePersonRow(db, '', 'default'), false, '不知道谁说的（空串）不建档')
+  db.prepare('DELETE FROM person WHERE spk = ?').run(N)
+  console.log('OK 自动建档')
+}
+
+// ---- 8) 多号合并：person_alias 归并后人数变少、条目数合并 ----
+{
+  const before = listPeople(db).stats
+  // DDDD4444 是 BBBB2222 的小号：指过去以后算一个人。
+  db.prepare("INSERT OR REPLACE INTO person_alias(space, spk, canonical_spk) VALUES('default','DDDD4444','BBBB2222')").run()
+  const after = listPeople(db)
+  assert.equal(after.stats.people, before.people - 1, '两个号合成一个人')
+  const b = after.people.find((p) => p.spk === 'BBBB2222')
+  assert.equal(b.count, 2, '条目数合起来算（各 1 条）')
+  assert.equal(after.people.some((p) => p.spk === 'DDDD4444'), false, '小号不再单列一行')
+  assert.equal(personEntries(db, { spk: 'DDDD4444' }).total, 2, '点开小号也是这个人的全部记忆')
+  assert.equal(personEntries(db, { spk: 'BBBB2222' }).spk, 'BBBB2222', '返回的 spk 是 canonical')
+  db.prepare("DELETE FROM person_alias WHERE spk = 'DDDD4444'").run()
+  assert.equal(listPeople(db).stats.people, before.people, '删掉映射就回到原样')
+  console.log('OK 多号合并')
+}
+
+// ---- 9) openid 回填：默认 dry-run 不写，apply 幂等 ----
+{
+  const d = mkdtempSync(join(tmpdir(), 'wm-openid-'))
+  const memDb = join(d, 'memory.db')
+  const groupDb = join(d, 'group.db')
+  const FULL = `AAAA1111${'B'.repeat(24)}`
+  const mem = new DatabaseSync(memDb)
+  mem.exec('CREATE TABLE entries(id INTEGER PRIMARY KEY, u TEXT, spk TEXT, t INTEGER)')
+  assert.equal(ensureSpeakerColumns(mem), true, '新库补表成功')
+  mem.prepare("INSERT INTO person(spk,space,name,aka,score,source,updated) VALUES('AAAA1111','default','ljm','[]',1,'manual',1)").run()
+  mem.close()
+  const g = new DatabaseSync(groupDb)
+  g.exec('CREATE TABLE messages(sender_id TEXT NOT NULL)')
+  g.prepare('INSERT INTO messages(sender_id) VALUES(?)').run(FULL)
+  g.close()
+
+  const script = join(here, '..', 'scripts', 'backfill-person-openid.mjs')
+  const run = (...args) => spawnSync(process.execPath, [script, '--db', memDb, '--group-db', groupDb, ...args], { encoding: 'utf8' })
+  const read = () => {
+    const db2 = new DatabaseSync(memDb)
+    const v = db2.prepare("SELECT openid_full FROM person WHERE spk = 'AAAA1111'").get()?.openid_full ?? null
+    db2.close()
+    return v
+  }
+
+  const dry = run()
+  assert.equal(dry.status, 0, `dry-run 跑通：${dry.stderr}`)
+  assert.ok(dry.stdout.includes('将要回填 1 行'), `dry-run 要打印将改的行：${dry.stdout}`)
+  assert.equal(read(), null, 'dry-run 一个字不写')
+
+  const first = run('--apply')
+  assert.equal(first.status, 0, `apply 跑通：${first.stderr}`)
+  assert.ok(first.stdout.includes('实写: 1 行'), `第一次 apply 写 1 行：${first.stdout}`)
+  assert.equal(read(), FULL, '完整 id 落库')
+
+  const second = run('--apply')
+  assert.equal(second.status, 0, `第二次 apply 跑通：${second.stderr}`)
+  assert.ok(second.stdout.includes('实写: 0 行'), `幂等：第二次写 0 行：${second.stdout}`)
+  assert.ok(second.stdout.includes('已一致: 1'), '第二次要报成「已一致」')
+  console.log('OK openid 回填')
 }
 
 console.log('\n全部通过')

@@ -20,7 +20,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { openDb } from '../lib/db-open.mjs'
 import {
-  GROUP_DB, WINDOW_MS, alignSpeaker, ensureSpeakerColumns, readGroupWindow, regexSpeaker,
+  GROUP_DB, WINDOW_MS, alignSpeaker, ensurePersonRow, ensureSpeakerColumns, readGroupWindow, regexSpeaker,
 } from '../lib/speaker.mjs'
 
 const DEFAULT_DB = join(homedir(), '.dsh', 'miyu', 'db', 'memory.db')
@@ -71,13 +71,15 @@ if (!cols.includes('spk')) {
 }
 
 const total = db.prepare("SELECT COUNT(*) c FROM entries WHERE u <> ''").get().c
-const sql = `SELECT id, u, t FROM entries WHERE u <> '' AND spk = '' ORDER BY t DESC${limit > 0 ? ' LIMIT ?' : ''}`
+// 有 space 列就带上：自动建档要跟随条目自己的空间（老库没有就落 default）。
+const hasSpace = cols.includes('space')
+const sql = `SELECT id, u, t${hasSpace ? ', space' : ''} FROM entries WHERE u <> '' AND spk = '' ORDER BY t DESC${limit > 0 ? ' LIMIT ?' : ''}`
 const rows = limit > 0 ? db.prepare(sql).all(limit) : db.prepare(sql).all()
 const coveredBefore = db.prepare("SELECT COUNT(*) c FROM entries WHERE spk IS NOT NULL AND spk <> ''").get().c
 
 const stats = {
   total, candidates: rows.length, coveredBefore,
-  regex: 0, aligned: 0, ambiguous: 0, none: 0, short: 0, applied: 0,
+  regex: 0, aligned: 0, ambiguous: 0, none: 0, short: 0, applied: 0, newPeople: 0,
 }
 
 const cache = new Map() // 同一分钟内的条目共用一次窗口查询
@@ -104,6 +106,8 @@ try {
     }
     if (spk !== '' && update) {
       update.run(spk, r.id)
+      // 回填也是「写入 spk」的一条路径：新号顺手自动建档（已有行不动）。
+      if (ensurePersonRow(db, spk, hasSpace ? r.space : 'default')) stats.newPeople += 1
       stats.applied += 1
     }
   }
@@ -134,7 +138,7 @@ console.log(`候选内最终覆盖: ${resolved} / ${stats.candidates} = ${pct(re
 console.log(`已留空        : ${empty} / ${stats.candidates} = ${pct(empty, stats.candidates)}`)
 console.log(`全库覆盖: 处理前 ${stats.coveredBefore} / ${total} = ${pct(stats.coveredBefore, total)}`)
 console.log(`          处理后 ${coveredAfter} / ${total} = ${pct(coveredAfter, total)}`)
-if (apply) console.log(`\n实写: ${stats.applied} 行（只动 spk）`)
+if (apply) console.log(`\n实写: ${stats.applied} 行（只动 spk；其中自动建档 ${stats.newPeople} 人）`)
 else console.log('\n没有写库。要真写：先复制一份库，再加 --apply。')
 
 db.close()
