@@ -108,5 +108,45 @@ const freshThin = { t: NOW - DAY, w: 1, emo: [], hits: 0, tier: 3, imp: null }
 // ---- 5. 常量同源：IMPORTANT_W 就是 constants 的那一个数 ----
 check('IMPORTANT_W === IMPORTANT_WEIGHT', IMPORTANT_W === IMPORTANT_WEIGHT, `${IMPORTANT_W} vs ${IMPORTANT_WEIGHT}`)
 
+// ---- 6. 门槛不许高过 imp=0 条目的理论上限（0.28.22：lookup-old 就是这么丢的） ----
+//
+// 病：lookup-old 门槛 0.45 × imp 权重 0.45，而库里 63% 的老条目 imp 恒 0、
+// 也没被想起过（hits=0）⇒ 得分上限 = 0.45×0.744 + 0.10 ≈ 0.435 < 0.45，
+// 「查旧事」场景下这种条目**一条都翻不出来**。修法：门槛按「该场景上限 × 0.80」定，
+// 0.45 → 0.35（权重一个字没动）。下面四条钉住「修好了，但没把闸门拆了」。
+{
+  // 天花板：没被想起过、tier 最好的条目，rel 轴最多 0.750（那 0.25 留给「以前被想起过」）
+  const relCap = relevanceAxis({ sim: 1, hits: 0, tier: 0 })
+  check('rel 轴天花板 = 0.750（hits=0、tier=0）', Math.abs(relCap - 0.75) < 1e-9, String(relCap))
+  for (const name of SCENE_NAMES) {
+    const { w } = SCENE[name]
+    const cap = w.rel * relCap + w.time // time 轴取最好的 1.00
+    check(`${name} 的门槛 ≤ 0.80 × imp=0 上限 ${cap.toFixed(4)}`,
+      AXES_THRESHOLD[name] <= 0.80 * cap + 1e-9,
+      `门槛=${AXES_THRESHOLD[name]} 上限=${cap.toFixed(4)}`)
+  }
+
+  // 库里 63% 的老条目就长这样：300 天前、imp 恒 0、从没被想起过
+  const oldImpZero = { t: NOW - 300 * DAY, w: 1, emo: [], hits: 0, tier: 0, imp: null }
+  const hit85 = scoreEntry(oldImpZero, { scene: 'lookup-old', now: NOW, sim: 0.85 })
+  check('imp=0 的旧条目（sim 0.85）在 lookup-old 能过线',
+    hit85.axes.imp === 0 && hit85.score > AXES_THRESHOLD['lookup-old'],
+    `imp=${hit85.axes.imp} score=${hit85.score.toFixed(4)} 门槛=${AXES_THRESHOLD['lookup-old']}`)
+  // 明显不相关：话根本不贴（sim 0.20），时间再新也不许过——修门槛不是拆闸门
+  const miss20 = scoreEntry(oldImpZero, { scene: 'lookup-old', now: NOW, sim: 0.20 })
+  check('明显不相关的旧条目仍过不了 lookup-old 的门槛',
+    miss20.score < AXES_THRESHOLD['lookup-old'],
+    `score=${miss20.score.toFixed(4)} 门槛=${AXES_THRESHOLD['lookup-old']}`)
+  // 中段「有点像」（sim 0.60）也不放行：门槛要卡在「贴」和「有点像」之间
+  const mid60 = scoreEntry(oldImpZero, { scene: 'lookup-old', now: NOW, sim: 0.60 })
+  check('只有 sim 0.60 的「有点像」也不过线',
+    mid60.score < AXES_THRESHOLD['lookup-old'],
+    `score=${mid60.score.toFixed(4)} 门槛=${AXES_THRESHOLD['lookup-old']}`)
+  // imp 仍参与（0.45 没动）：同一条 rel 下，说它重要的必须排前面
+  const marked = scoreEntry({ ...oldImpZero, w: IMPORTANT_W, emo: ['sad', 'tired'] }, { scene: 'lookup-old', now: NOW, sim: 0.85 })
+  check('同一条 rel 下，imp 高的旧条目排在 imp=0 的前面',
+    marked.score > hit85.score, `imp=${marked.axes.imp.toFixed(2)} score=${marked.score.toFixed(4)} > imp=0 ${hit85.score.toFixed(4)}`)
+}
+
 console.log(`\n通过 ${pass}，失败 ${fail}`)
 if (fail > 0) process.exit(1)

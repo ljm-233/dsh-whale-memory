@@ -505,8 +505,12 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
   check('recall 场景两条都过线、旧的排前',
     recall.rows.length === 2 && recall.rows[0].id === tailOf(idOld) && recall.rows[0].score > recall.rows[1].score,
     JSON.stringify(recall.rows))
-  check('lookup-old 只剩旧的那条（新的那条 0.44 没到 0.45）',
-    lookup.rows.length === 1 && lookup.rows[0].id === tailOf(idOld), JSON.stringify(lookup.rows))
+  // 0.28.22：lookup-old 门槛 0.45→0.35。新的那条（rel 0.75、imp=0）正好落在 0.4375 的天花板上，
+  // 旧门槛把它和「imp=0 的老条目」一起关在门外；现在两条都在线，判别落在名字上：
+  // 旧的靠 hits/imp 拿到 0.89，新的只是 sim 贴所以 0.44——**场景没变成不筛人**，别再把「只剩一条」当门槛的依据。
+  check('lookup-old 两条都在线，旧的排前面且分数高出一倍以上',
+    lookup.rows.length === 2 && lookup.rows[0].id === tailOf(idOld)
+    && lookup.rows[0].score > lookup.rows[1].score * 1.5, JSON.stringify(lookup.rows))
   check('daily 只剩新的那条（旧的 300 天掉到线下）',
     daily.rows.length === 1 && daily.rows[0].id === tailOf(idNew), JSON.stringify(daily.rows))
 

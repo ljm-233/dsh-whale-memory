@@ -59,7 +59,7 @@
 | 三轴纯函数 | `lib/axes.mjs`（新） | 原型搬过来：`rel = 0.70·sim + 0.25·log1p(hits)/log1p(5) + 0.05·(1 − min(9,tier)/9)`、`imp = 0.35·(w−1)/7 + 0.25·min(1,n_emo/2) + 0.20·min(1,cites/3) + 0.20·[marked]`、`time = 0.5^(ageDays/halfLife)`；`scoreEntry()` 只出一个 0..1 的分，`axes` 只给测试/调试看。`IMPORTANT_W` 直接取 `constants.mjs` 的 `IMPORTANT_WEIGHT`（不再各写一份）。`sceneOf()` 认不出的场景名回落 `recall`；`detectScene()` 按线索词 `{上周,上次,以前,之前,那个,后来,记得吗}` 选 `lookup-old`（只在配置成 `auto` 时用）。 |
 | 场景权重 | `lib/axes.mjs` 的 `SCENE` | `recall` .55/.25/.20 半衰 30d、`lookup-old` .45/.45/.10 半衰 3650d、`daily` .35/.15/.50 半衰 7d。权重和恒为 1（测试钉住）。**单一来源**：设置页与 `/status` 都回传它算出来的结果，别处不写数。 |
 | 接入点 | `lib/recall.mjs` 的 `associate()` | 原来 `recall.mjs:136-142` 那三行（`decay`/`penalty`/`s`）搬进 `legacyScore()`；新路径用 `scoreEntry()`。冷区候选一次查询补两列原料：`imp`（缺列 → `NULL AS imp`）与 `cites`（`entry_evidence` 条数，缺表 → 0），探测只做一次。`emo` 解析失败当空数组——一个坏字段不许把整段联想带走。 |
-| 门槛 | `lib/constants.mjs` 的 `AXES_THRESHOLD` | 新分 0..1，旧那把 2.0 的尺子不能用：`recall 0.55 / lookup-old 0.45 / daily 0.60`。`legacy` 模式仍读 `recallThreshold`（默认 2.0），两条路各用各的门槛。`confidenceOf()` 也改成读这一轮真用的那把尺子。 |
+| 门槛 | `lib/constants.mjs` 的 `AXES_THRESHOLD` | 新分 0..1，旧那把 2.0 的尺子不能用：`recall 0.55 / lookup-old 0.35 / daily 0.60`。`legacy` 模式仍读 `recallThreshold`（默认 2.0），两条路各用各的门槛。`confidenceOf()` 也改成读这一轮真用的那把尺子。 |
 | 可观测 | `/dsh-whale-memory/status` 的 `axes` 字段 + `axesDebug` | status 回 `{mode, scene, sceneConfigured, debug, threshold, scenes:{三套权重+半衰+门槛}, envOverride}`。`axesDebug`（默认关，设置页可开）在日志里打一行头（场景/权重/半衰/门槛）+ 本次 top5 每条 `rel/imp/time → 分`，只读、不动排序、不写库。 |
 | 切换 | 设置项 `scoreMode` / 环境变量 `WHALE_SCORE_MODE` | `axes`（默认）↔ `legacy`（旧公式）。环境变量优先，重启生效；设置页改完下一轮就生效。设置页「危险与诊断 → 打分与调试」组（高级折叠里）新增三行：打分公式（下拉）、打分场景（下拉：recall/lookup-old/daily/auto）、日志打印三轴分解（开关）。client.js 为此新增 `kind: 'select'`（原来只有 string/bool/num 三种）。 |
 
@@ -261,8 +261,10 @@ score = w_rel·rel + w_imp·imp + w_time·time        （三项权重和恒为 1
 再叠上 `rel` 的天花板（`hits=0` 的条目 sim 打满也只有 0.744），结果是**「想得多的」赢「说得对的」**：
 `scripts/probe-recall.mjs` 里，问「上次说的自己梳理记忆的功能后来做完了没」，
 真命中 sim 0.85 只排第 9，前面压着 sim 0.41 的身份模板。权重调成 0.65/0.15 后同一批五条旧条目全部进前五。
-**没动的那一格**：`lookup-old` 门槛 0.45 仍高于 `imp=0` 条目的理论上限（`0.45×0.744 + 0.10 ≈ 0.435`），
-所以这种条目在「查旧事」场景里一条都翻不出来——要修得动 `lookup-old` 的权重或把门槛压到 0.40 以下，单独做。
+**0.28.22 修掉的那一格**：`lookup-old` 门槛原来是 0.45，高于 `imp=0` 条目的理论上限
+（`0.45×0.750 + 0.10 = 0.4375`，`hits=0` 时 rel 轴最高 0.750），所以这种条目在「查旧事」场景里一条都翻不出来。
+修法只动门槛一个数：**门槛 = 该场景 imp=0 上限 × 0.80**，`0.45 → 0.35`（`0.80` 是 `recall` 那格一直在用的比例，
+`0.55 / 0.6875`）；权重一个字没改，`imp` 仍是这个场景最大的判别轴。`tests/test-axes.mjs` 第 6 节把「门槛 ≤ 0.80×上限」钉成不变式。
 
 **「查旧事几乎不衰」不是把分压平，是换一个十年半衰**——同一个 `t`，换个场景就是另一个数，存储一个字都不改。测试 2 就是钉这一条：300 天前那条在 `lookup-old` 里 `time > 0.9`，在 `daily` 里 `< 0.001`。
 
@@ -286,7 +288,7 @@ detail:full / 关键词命中 {上周,上次,以前,之前,那个,后来,记得�
 | --- | --- |
 | 1946 条老条目 | **零操作**。`imp` 为 NULL → 走自动公式；`hits/tier/t/vec` 全是既有列 |
 | 排序公式 | 只换 `recall.mjs:138-141` 那三行（`decay` / `penalty` / `s`）。旧公式保留成 `legacyScore()`，A/B 两周 |
-| 阈值 | `RECALL_THRESHOLD = 2.0` 是旧刻度的数。新分数在 0..1，按场景换刻度：`recall 0.55 / lookup-old 0.45 / daily 0.60`（三个常量，写 `constants.mjs` 一处） |
+| 阈值 | `RECALL_THRESHOLD = 2.0` 是旧刻度的数。新分数在 0..1，按场景换刻度：`recall 0.55 / lookup-old 0.35 / daily 0.60`（三个常量，写 `constants.mjs` 一处；口径 = 该场景 imp=0 上限 × 0.80，0.28.22 把 `lookup-old` 从 0.45 修成 0.35） |
 | 向量 | 不动。`vec` 继续给 `rel` 里的 `sim` 供料 |
 
 ### 反例约束（写进代码注释，防以后的自己）
