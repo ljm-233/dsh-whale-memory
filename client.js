@@ -183,6 +183,8 @@ window.__ModuleLoader__.load({
             long: '比上次开口时变化多少才算「值得说一句」；调大它会安静很多。' },
           { tier: 'adv', path: ['moodInjectCooldownHours'], label: '两次之间至少隔（小时）', kind: 'num', min: 0, max: 168, step: 1, desc: '免得连着几轮都说',
             long: '防止连续几轮都在说心情；跨过这个间隔才允许再开口。' },
+          { tier: 'core', path: ['moodChatLine'], label: '聊天常驻行「现在的心情」', kind: 'bool', desc: '每轮一行状态牌，不吃上面的配额',
+            long: '开：每轮开头都有一行极短的心情牌（如「心情 38/100 平：照常说话。」），只读状态、不写库、不占日上限、不受动几格与冷却限制 · 关：回到只有四道闸放行才出现一行。' },
         ],
       },
 
