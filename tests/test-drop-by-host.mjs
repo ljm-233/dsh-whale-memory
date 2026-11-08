@@ -81,8 +81,10 @@ ok('返回了 handleSessionEvent（不再自己 ctx.on）', () => assert.equal(t
 const tool = registered.find((t) => t.name === 'drop_by_at')
 ok('注册了 drop_by_at', () => {
   assert.ok(tool, '没注册上')
-  assert.equal(tool.parameters.type, 'object')
-  assert.deepEqual(tool.parameters.required, ['minutes'])
+  // 2026-11-08：parameters 改成 schemastery 属性表（外层 type:'object' 会让 defineTool 抛
+  // 「parameters.type must be a value schema object」），所以这里直接查有没有 minutes 这个键。
+  assert.ok(tool.parameters.minutes, 'parameters 里应有 minutes')
+  assert.equal(tool.parameters.minutes.type, 'integer')
 })
 
 const before = Date.now()
