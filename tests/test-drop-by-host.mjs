@@ -187,8 +187,9 @@ ok('安静不足 45 分钟 → 不叫醒', () => {
     logger() { return { info: () => {} } },
   }
   const r = registerDropBy(ctx2, { config: { wakePromptHint: false }, stateFile: join(dir, 'x.json') })
-  ok('没有 dsh-tools：drop_by_at 不注册，handleSessionEvent 照旧给', () => {
-    assert.equal(bare.length, 0)
+  ok('没有 dsh-tools：drop_by_at 用裸对象注册，handleSessionEvent 照旧给', () => {
+    assert.ok(bare.length >= 1, 'defineTool 拿不到时退回恒等包装，工具仍然注册')
+    assert.equal(bare[0]?.name, 'drop_by_at')
     assert.equal(typeof r.handleSessionEvent, 'function')
   })
 }

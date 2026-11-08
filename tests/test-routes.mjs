@@ -318,10 +318,16 @@ const post = (path, body) => new Promise((ok) => {
 }
 
 // ---- 记忆工具：查与改错 ----
-if (tools.size === 0) {
+if (!tools.has('memory_recall') && tools.size === 0) {
   console.log('SKIP 记忆工具（这台机器上找不到 @deepseek-ai/dsh-tools）')
 } else {
   const recall = tools.get('memory_recall')
+  // 2026-11-08：合并 eye/drop-by 之后，这台机器上可能只注册得到 look/see/drop_by_at，
+  // 记忆那几个仍要 @deepseek-ai/dsh-tools 才出现。所以「有没有记忆工具」按实际能力判，
+  // 不拿它当整块的开关。
+  if (!recall) {
+    console.log('SKIP 记忆工具（这台机器上只注册到 look/see/drop_by_at 这一批）')
+  } else {
   const fix = tools.get('memory_correct')
   const policy = tools.get('memory_policy')
   assert.ok(recall, '要注册 memory_recall')
@@ -531,6 +537,7 @@ if (tools.size === 0) {
   db2.close()
   console.log('OK 任务栈开机对齐')
 }
+  }
 
 console.log('\n全部通过')
 

@@ -165,9 +165,9 @@ console.log('see(无 prepareCall 退化):', JSON.stringify({ ok: fallback.ok, mo
 registered.clear()
 sections.length = 0
 registerEye(fakeCtx(), { config: { eyeSee: true, eyePromptHint: true }, shotsDir })
-assert.equal(registered.size, 0, '没有 defineTool 时不该注册工具（跟本插件其它工具同一道闸）')
+assert.ok(registered.size >= 2, '没有 defineTool 也要注册 look/see（裸对象直接交给 tools.register）')
 assert.equal(sections.length, 1, '提示词不受工具闸影响')
-console.log('无 defineTool: 工具不注册，提示词仍在')
+console.log('无 defineTool: 工具用裸对象注册，提示词仍在')
 
 // ── 配置键加 eye 前缀，读的是 eye* 那一批 ──────────────────────────────────
 registered.clear()
