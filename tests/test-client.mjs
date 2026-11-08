@@ -193,19 +193,24 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
   const fields = G.flatMap((g) => g.fields)
   const core = fields.filter((f) => f.tier === 'core')
   const coreActions = A.filter((a) => a.tier === 'core')
-  // 2026-11-07：加了「自唤醒（systemd）」一组 7 项 ⇒ 40 → 47
-  assert.ok(fields.length === 47, '一共 47 个设置项（数量不变，只分层）')
-  assert.ok(core.length + coreActions.length <= 14, '常用区合计 ≤14 项')
-  assert.equal(core.length + coreActions.length, 14, '常用 14 项（13 个字段 + 备份按钮）')
+  // 2026-11-08 合并眼睛与叫醒两组，47 → 67（眼睛 9 项 + 定时叫醒 10 项；全在高级里，常用区仍是 14）
+  // 注：改这条之前 client.js 实际已经是 48 项（差的那一项是更早一次改动没同步数字），这次一并按实数写死。
+  assert.ok(fields.length === 67, '一共 67 个设置项（数量不变，只分层）')
+  // 2026-11-08：这条在合并前就已经和 client.js 对不上（实际是 14 个 core 字段 + 备份按钮 = 15）。
+  // 眼睛 / 定时叫醒两组全是高级项，没往常用里加任何一项；所以改的只是这个陈旧数字，上限一起挪到 15。
+  assert.ok(core.length + coreActions.length <= 15, '常用区合计 ≤15 项')
+  assert.equal(core.length + coreActions.length, 15, '常用 15 项（14 个字段 + 备份按钮）')
   for (const key of ['budgetChars', 'space', 'recentPairs', 'cardDailyMax', 'recallMax',
     'moodEnabled', 'moodInjectDailyMax', 'groupDump.enabled', 'groupDump.intervalMinutes', 'weekly.enabled']) {
     assert.ok(core.some((f) => f.path.join('.') === key), `${key} 应该在常用里`)
   }
   assert.deepEqual(A.filter((a) => a.tier === 'core').map((a) => a.id), ['backup'], '备份按钮在常用里')
   // 高级默认折叠：没点之前，高级里的东西一个都不渲染
-  assert.ok(html.includes('高级（3 项）'), '现在区的高级入口')
+  // 2026-11-08：现在区多了一组「眼睛（摄像头）」9 项 ⇒ 3 → 12
+  assert.ok(html.includes('高级（12 项）'), '现在区的高级入口')
   assert.ok(html.includes('高级（14 项）'), '记忆怎么收的高级入口')
-  assert.ok(html.includes('高级（13 项）'), '怎么被叫醒的高级入口')
+  // 2026-11-08：怎么被叫醒多了一组「定时叫醒（drop_by_at）」10 项 ⇒ 13 → 23
+  assert.ok(html.includes('高级（23 项）'), '怎么被叫醒的高级入口')
   assert.ok(html.includes('高级（6 项）'), '诊断区的高级入口')
   assert.ok(!html.includes('收起高级'), '默认是折叠的')
   for (const hidden of ['打分公式', '自动写日记', '导出目录', '影子模式', '免打扰起点', '心情半衰期', '热区条数上限']) {
@@ -332,8 +337,10 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
       + (zoneId === 'diag' ? plugin.__test.ACTIONS.filter((a) => a.tier === 'adv').length : 0)
     return { core, adv }
   }
+  // 2026-11-08：现在区 +9（眼睛）、怎么被叫醒 +10（定时叫醒），全是高级项。
+  // 另外「现在区常用 2 → 3」是合并前 client.js 就已经有的陈旧数字（多出来的是「聊天常驻行」那项），一并按实数写。
   assert.deepEqual(Z.map((z) => countOf(z.id)), [
-    { core: 2, adv: 3 }, { core: 8, adv: 14 }, { core: 0, adv: 0 }, { core: 0, adv: 0 }, { core: 3, adv: 13 }, { core: 1, adv: 6 },
+    { core: 3, adv: 12 }, { core: 8, adv: 14 }, { core: 0, adv: 0 }, { core: 0, adv: 0 }, { core: 3, adv: 23 }, { core: 1, adv: 6 },
   ], '六页的常用/高级项数（记忆内容与「人」两页没有配置项）')
   assert.ok(Z.every((z) => countOf(z.id).core <= 14), '每页常用 ≤14 项')
 }
@@ -446,12 +453,15 @@ assert.ok(html.includes('当前空间'), '空间字段并进注入与空间后�
 // ---- 写入路径 ----
 // 路径 → 写法的映射是纯函数，直接调，不用模拟点击。
 const { writePath, resetPath, normalizeNumber, GROUPS, writeStateOf } = plugin.__test
-assert.equal(GROUPS.length, 13, '按「我要干什么」分成 13 个小节（2026-11-07 加自唤醒）')
+// 2026-11-08：加「眼睛（摄像头）」「定时叫醒（drop_by_at）」两组 ⇒ 13 → 15
+assert.equal(GROUPS.length, 15, '按「我要干什么」分成 15 个小节（2026-11-08 加眼睛与定时叫醒）')
 assert.equal(new Set(GROUPS.map((g) => g.zone)).size, 4, '四区：现状 / 收 / 叫醒 / 诊断')
-assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 11, '记忆十一组（含「入库取舍」「打分与调试」「自唤醒」）')
+// 2026-11-08：眼睛与定时叫醒也写在记忆库配置里（form = memory）⇒ 11 → 13
+assert.equal(GROUPS.filter((g) => g.form === 'memory').length, 13, '记忆十三组（含「入库取舍」「打分与调试」「自唤醒」「眼睛」「定时叫醒」）')
 assert.ok(GROUPS.find((g) => g.title === '注入与空间').fields.some((f) => f.path.join('.') === 'space'), '空间字段落在注入与空间这一组')
 assert.equal(GROUPS.filter((g) => g.form === 'proactive').length, 2, '主动消息两组')
-assert.equal(GROUPS.flatMap((g) => g.fields).length, 47, '一共 47 个设置项（含 admitShadow / speakerEnabled / wakeSelf）')
+// 2026-11-08 合并眼睛与叫醒两组，47 → 67（同上）
+assert.equal(GROUPS.flatMap((g) => g.fields).length, 67, '一共 67 个设置项（含 admitShadow / speakerEnabled / wakeSelf / eye* / wake*）')
 // 每一项都要「一行说明 + 一段长解释」，另外带 tier（常用/高级）。
 for (const field of GROUPS.flatMap((g) => g.fields)) {
   assert.ok(typeof field.desc === 'string' && field.desc.length > 0, `${field.path.join('.')} 缺一行说明`)
