@@ -3,8 +3,8 @@
  * 跑法：node tests/test-fts.mjs
  */
 import { DatabaseSync } from 'node:sqlite'
-import { checkFts, rebuildFts, isCorrupt } from '../lib/fts.mjs'
-import { keywordIds } from '../lib/entries.mjs'
+import { checkFts, rebuildFts, isCorrupt } from '../lib/core/fts.mjs'
+import { keywordIds } from '../lib/core/entries.mjs'
 
 let pass = 0
 let fail = 0

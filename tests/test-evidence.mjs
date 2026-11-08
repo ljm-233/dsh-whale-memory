@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { apply } from '../lib/index.mjs'
 import { createWriter } from '../lib/writer.mjs'
-import { registerTools } from '../lib/tools.mjs'
+import { registerTools } from '../lib/surface/tools.mjs'
 
 let pass = 0
 let fail = 0

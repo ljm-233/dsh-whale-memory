@@ -18,10 +18,10 @@
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { openDb } from '../lib/db-open.mjs'
+import { openDb } from '../lib/core/db-open.mjs'
 import {
   GROUP_DB, WINDOW_MS, alignSpeaker, ensurePersonRow, ensureSpeakerColumns, readGroupWindow, regexSpeaker,
-} from '../lib/speaker.mjs'
+} from '../lib/domain/speaker.mjs'
 
 const DEFAULT_DB = join(homedir(), '.dsh', 'miyu', 'db', 'memory.db')
 

@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   alignSpeaker, ensureSpeakerColumns, normUserText, regexSpeaker, toSpk,
-} from '../lib/speaker.mjs'
+} from '../lib/domain/speaker.mjs'
 import { apply } from '../lib/index.mjs'
 
 const LJM = '8F0AA3985B0632ACDFE34F4778F881D1'

@@ -3,11 +3,11 @@
  * 跑法：node tests/test-scenes.mjs
  */
 import { DatabaseSync } from 'node:sqlite'
-import { rebuildScenes, deleteScene } from '../lib/scenes.mjs'
+import { rebuildScenes, deleteScene } from '../lib/domain/scenes.mjs'
 import { cueWords } from '../lib/language.mjs'
 import { distillPersona, rebuildPersona, readPersona } from '../lib/persona.mjs'
 import { rebuildGraph } from '../lib/graph.mjs'
-import { keywordIds } from '../lib/entries.mjs'
+import { keywordIds } from '../lib/core/entries.mjs'
 
 let pass = 0
 let fail = 0

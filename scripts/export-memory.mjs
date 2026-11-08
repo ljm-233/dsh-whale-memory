@@ -10,7 +10,7 @@
  *
  * 只读源库：用 SQLite 的只读打开，导出不会改动记忆本身。
  */
-import { openDb } from '../lib/db-open.mjs'
+import { openDb } from '../lib/core/db-open.mjs'
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'

@@ -2,7 +2,7 @@
  * dsh-whale-memory —— 「人」这一维自检
  *
  * 三块，各测各的：
- *   1. 纯查询（lib/people.mjs）：覆盖率口径、只有号的行、排序、越界截断、参数化 SQL；
+ *   1. 纯查询（lib/domain/people.mjs）：覆盖率口径、只有号的行、排序、越界截断、参数化 SQL；
  *   2. 两个端点（/people、/people/entries）：只读、405、参数截断；
  *   3. 页面纯函数（peopleCountLine / peopleCoverageNote / peopleRow / peopleBody）：
  *      统计行、覆盖率灰字、空状态、展开后的第一条记忆就是记忆内容页那一套行渲染。
@@ -18,8 +18,8 @@ import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { apply } from '../lib/index.mjs'
-import { listPeople, personEntries, coverageOf, PEOPLE_MAX, PEOPLE_ENTRIES_MAX } from '../lib/people.mjs'
-import { ensurePersonRow, ensureSpeakerColumns } from '../lib/speaker.mjs'
+import { listPeople, personEntries, coverageOf, PEOPLE_MAX, PEOPLE_ENTRIES_MAX } from '../lib/domain/people.mjs'
+import { ensurePersonRow, ensureSpeakerColumns } from '../lib/domain/speaker.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const dir = mkdtempSync(join(tmpdir(), 'wm-people-'))

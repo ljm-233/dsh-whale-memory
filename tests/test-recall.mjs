@@ -18,7 +18,7 @@ const { DatabaseSync } = await import('node:sqlite')
 const { mkdtempSync, writeFileSync } = await import('node:fs')
 const { tmpdir } = await import('node:os')
 const { join } = await import('node:path')
-const { createRecall, coldPoolOf, kwArmOf, kwTermsOf } = await import('../lib/recall.mjs')
+const { createRecall, coldPoolOf, kwArmOf, kwTermsOf } = await import('../lib/domain/recall.mjs')
 const { cardLine } = await import('../lib/format.mjs')
 const { RECALL_CARD_MAX, RECALL_SECTION_CAP } = await import('../lib/constants.mjs')
 
@@ -115,7 +115,7 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
 
 // ---- 7. 召回限流：一条人类消息之间最多 3 次 ----
 {
-  const { registerTools } = await import('../lib/tools.mjs')
+  const { registerTools } = await import('../lib/surface/tools.mjs')
   const tdb = freshDb()
   tdb.prepare('INSERT INTO entries (u,a,t,w,emo,hot) VALUES (?,?,?,?,?,1)').run('冷区那条', '嗯', Date.now(), 1, '[]')
   tdb.prepare('INSERT INTO entries (u,a,t,w,emo,hot) VALUES (?,?,?,?,?,1)').run('冷区旁边那条', '好', Date.now() - 1000, 1, '[]')
@@ -225,7 +225,7 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
 
 // ---- 9. 召回命中后升热：w+1 / hits+1 / tier-1 ----
 {
-  const { warmEntries } = await import('../lib/tools.mjs')
+  const { warmEntries } = await import('../lib/surface/tools.mjs')
   const wdb = freshDb()
   wdb.prepare('INSERT INTO entries (u,a,t,w,emo,hot,hits,tier) VALUES (?,?,?,?,?,1,0,2)')
     .run('一条旧事', '嗯', Date.now(), 3, '[]')
@@ -314,7 +314,7 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
 
 // ---- 12. memory_recall：默认只回卡，detail:full 才给原文并分页 ----
 {
-  const { registerTools } = await import('../lib/tools.mjs')
+  const { registerTools } = await import('../lib/surface/tools.mjs')
   const db2 = freshDb()
   const longUser = `冷区那条记忆：${'逐字原话'.repeat(40)}片尾`
   db2.prepare('INSERT INTO entries (u,a,t,w,emo,hot,tier) VALUES (?,?,?,?,?,0,0)')

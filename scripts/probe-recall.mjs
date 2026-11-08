@@ -3,7 +3,7 @@
  * 只读探针：量「旧条目还翻得回来吗」。
  *
  * 干三件事，全是只读，一行都不写库：
- *   1. 候选池：照 lib/recall.mjs 那段 SQL 取冷区候选，看目标条目在不在池里（随机 100 是随机的，所以要跑多轮）；
+ *   1. 候选池：照 lib/domain/recall.mjs 那段 SQL 取冷区候选，看目标条目在不在池里（随机 100 是随机的，所以要跑多轮）；
  *   2. 算命：绕开候选池，直接把目标条目按 lib/axes.mjs 打一次分——「如果它进了池，过不过门槛」；
  *   3. 端到端：池 → 打分 → 过门槛 → 排序 → 截 limit → 按 RECALL_SECTION_CAP 拼卡，看目标进没进卡。
  *
@@ -26,7 +26,7 @@ const { scoreEntry, resolveScene } = await import('../lib/axes.mjs')
 const { simOf } = await import('../lib/language.mjs')
 const { blobToVec, embedTexts } = await import('../lib/vector.mjs')
 const { cardLine } = await import('../lib/format.mjs')
-const { coldPoolOf } = await import('../lib/recall.mjs')
+const { coldPoolOf } = await import('../lib/domain/recall.mjs')
 const {
   AXES_THRESHOLD, IMPORTANT_WEIGHT, RECALL_SECTION_CAP,
 } = await import('../lib/constants.mjs')
@@ -64,7 +64,7 @@ const emoOf = (raw) => {
 const db = new DatabaseSync(DB_PATH, { readOnly: true })
 const space = String(db.prepare('SELECT space FROM entries GROUP BY space ORDER BY COUNT(*) DESC').get()?.space ?? 'default')
 
-/** 冷区候选池：**直接用 lib/recall.mjs 的那个**（连同 hot 过滤），不抄 SQL。 */
+/** 冷区候选池：**直接用 lib/domain/recall.mjs 的那个**（连同 hot 过滤），不抄 SQL。 */
 const cols = 'id,u,a,t,w,emo,vec,tier,hits,imp,(SELECT COUNT(*) FROM entry_evidence v WHERE v.entry_id=entries.id) AS cites'
 const coldTotal = db.prepare('SELECT COUNT(*) c FROM entries WHERE hot=0 AND space=?').get(space)?.c ?? 0
 

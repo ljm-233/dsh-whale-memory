@@ -14,7 +14,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { openDb } from '../lib/db-open.mjs'
+import { openDb } from '../lib/core/db-open.mjs'
 import { ensureTaskTable, parseOpen, syncFromNext, stackTop } from '../lib/tasks.mjs'
 
 const argv = process.argv.slice(2)

@@ -17,7 +17,7 @@ import {
   applyMoodTurn, applyTurn, buildSelfLine, decay, ensureMoodTable, initState, judgeSelf, judgeUser,
   loadState, logTurn, matchUnwilling, moodDirective, note, saveState, say,
   BASE_MOOD, DIRECTIVE_TIERS, DIMS, HINT, PER_DAY,
-} from '../lib/mood.mjs'
+} from '../lib/domain/mood.mjs'
 import {
   MOOD_INJECT_COOLDOWN_HOURS, MOOD_INJECT_DAILY_MAX, MOOD_INJECT_MIN_DELTA, MOOD_LINE_CAP,
 } from '../lib/constants.mjs'

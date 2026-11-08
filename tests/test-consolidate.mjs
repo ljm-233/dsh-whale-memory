@@ -11,8 +11,8 @@ import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { createConsolidator, scheduleConsolidate, CONSOLIDATE_INTERVAL_MS } from '../lib/consolidate.mjs'
-import { createBackup } from '../lib/backup.mjs'
+import { createConsolidator, scheduleConsolidate, CONSOLIDATE_INTERVAL_MS } from '../lib/domain/consolidate.mjs'
+import { createBackup } from '../lib/core/backup.mjs'
 
 let pass = 0
 let fail = 0

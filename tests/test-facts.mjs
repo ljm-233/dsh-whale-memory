@@ -16,9 +16,9 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   ensureFactColumns, listFacts, recordFact, recentConflicts,
-} from '../lib/facts.mjs'
+} from '../lib/core/facts.mjs'
 import { apply } from '../lib/index.mjs'
-import { registerTools } from '../lib/tools.mjs'
+import { registerTools } from '../lib/surface/tools.mjs'
 
 let pass = 0
 let fail = 0
