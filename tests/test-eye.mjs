@@ -68,6 +68,9 @@ function fakeCtx({ prepareCall = true } = {}) {
       callback({ ...picked, logger: () => ({ info: () => {} }) })
     },
     logger: () => ({ info: () => {} }),
+    // 2026-11-08：attachments / llm 改成惰性取了（QQ preset 里没有 attachments，
+    // inject 会挂起），所以桩也要按真宿主那样提供 ctx.get。
+    get(name) { return services[name] },
   }
 }
 
