@@ -42,6 +42,9 @@ const fakeCtx = {
       if (key === 'agents') scope.agents = { get: (id) => (id === 'sess-1' ? agent : undefined) }
       if (key === 'tools') scope.tools = { register: (tool) => registered.push(tool) }
       if (key === 'systemPrompt') scope.systemPrompt = { section: () => () => {} }
+      // 2026-11-08：定时改成走 inject 拿 timer 服务（真宿主里 ctx.interval 是访问器，
+      // 读一下就抛 `cannot get property "timer" without inject`）。这里补上同一个服务。
+      if (key === 'timer') scope.timer = { setInterval: (cb, ms) => { intervals.push({ cb, ms }); return () => {} } }
     }
     cb(scope)
   },
@@ -67,7 +70,7 @@ const { handleSessionEvent: fire } = registerDropBy(fakeCtx, {
 
 const tick = intervals[0]?.cb
 
-ok('用 ctx.interval 起定时，默认 20 分钟', () => {
+ok('用 timer 服务起定时，默认 20 分钟', () => {
   assert.equal(intervals.length, 1)
   assert.equal(intervals[0].ms, 20 * 60_000)
 })
