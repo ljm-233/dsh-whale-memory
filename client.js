@@ -369,69 +369,6 @@ window.__ModuleLoader__.load({
         ],
       },
 
-      // ───────────── 眼睛（摄像头）：look / see ─────────────
-      // 2026-11-08：从独立插件 dsh-eye 并进来。这一组全是高级项（常用区合计 ≤14 项不动）。
-      {
-        zone: 'now',
-        form: 'memory',
-        title: '眼睛（摄像头）',
-        hint: '抓一帧看看眼前是什么。',
-        long: '两个工具：look 抓一帧回来、把图直接放进工具结果；see 抓完让模型当场说出看到什么。抓之前先丢几帧（摄像头刚打开的头几帧常是全黑 / 全绿），同一时刻只有一个 ffmpeg 占设备，第二个排队等锁。抓不到就返回结构化错误，不会中断会话。',
-        fields: [
-          { tier: 'adv', path: ['eyeDevice'], label: '设备', kind: 'string', desc: '默认 /dev/video0',
-            long: 'v4l2 设备路径。合盖、外接屏切换之后设备号可能会变，抓不到 no-device 时先看这一项。' },
-          { tier: 'adv', path: ['eyeSize'], label: '分辨率', kind: 'string', desc: 'WxH，默认 640x480',
-            long: '写成 640x480 这样；设备不认的尺寸会退回默认，并在结果的 note 里说明用了哪个。' },
-          { tier: 'adv', path: ['eyeWarmupMs'], label: '开机丢帧（毫秒）', kind: 'int', min: 0, max: 2000, desc: '头几帧常是全黑',
-            long: '摄像头约 30fps，120ms ≈ 丢 4 帧。调大更稳，但每抓一帧要多等一会儿。' },
-          { tier: 'adv', path: ['eyeKeep'], label: '保留几张（张）', kind: 'int', min: 1, max: 500, desc: '多了自动删旧的',
-            long: '存图目录里只留最近这几张，多出来的按时间自动删掉，免得占满磁盘。' },
-          { tier: 'adv', path: ['eyeSee'], label: '启用 see', kind: 'bool', desc: '关掉就只留 look',
-            long: '开：look 和 see 都注册 · 关：只留 look，模型得自己再打开图片看。' },
-          { tier: 'adv', path: ['eyeSeeMaxTokens'], label: 'see 回答上限（字）', kind: 'int', min: 32, max: 4000, desc: '一句话描述就够',
-            long: 'see 那一次调用的 maxTokens；调大能拿到更长的描述，也更费 token。' },
-          { tier: 'adv', path: ['eyeLockWaitMs'], label: '等锁上限（毫秒）', kind: 'int', min: 0, max: 60000, desc: '别人占着设备时排队',
-            long: '同一时刻只允许一个抓帧。等不到锁就返回 error=busy，不会把设备撞到 busy 状态。' },
-          { tier: 'adv', path: ['eyeTimeoutMs'], label: '单次抓帧超时（毫秒）', kind: 'int', min: 500, max: 60000, desc: '设备卡住就到这里收手',
-            long: '一次抓帧的总超时；超了返回 error=timeout，会话照常继续。' },
-          { tier: 'adv', path: ['eyePromptHint'], label: '提示词里说「你能看」', kind: 'bool', desc: '不给这句就想不起来用',
-            long: '开：上下文里多一行「你可以用 look / see」 · 关：工具还在，但模型不一定想得起来。' },
-        ],
-      },
-
-      // ───────────── 定时叫醒：drop_by_at ─────────────
-      // 2026-11-08：从独立插件 dsh-drop-by 并进来。全高级项；跟上面「自唤醒（systemd）」那条线
-      // 不是一回事——那一组只写镜像文件给外部脚本读，这一组是插件自己起定时器 + 叫醒会话。
-      {
-        zone: 'wake',
-        form: 'memory',
-        title: '定时叫醒（drop_by_at）',
-        hint: '到点自己醒，什么时候醒由它自己排。',
-        long: '插件自己起定时器看表：闲得够久、或者它用 drop_by_at 给自己排的点到了，就用一条旁白把会话叫醒（台词它自己写，不想说就把那轮留空）。防抖三件：同一分钟只触发一次、一小时有上限、超了停到下一个整点。别人的话一进来，排好的预约就作废。',
-        fields: [
-          { tier: 'adv', path: ['wakeEnabled'], label: '定时叫醒开关', kind: 'bool', desc: '关掉就只剩工具',
-            long: '开：定时器照跑，够闲就叫 · 关：一次都不会自动叫醒，drop_by_at 仍可排点（只是没人来叫）。' },
-          { tier: 'adv', path: ['wakeIntervalMinutes'], label: '多久看一次表（分钟）', kind: 'int', min: 1, max: 240, desc: '改了要重载插件',
-            long: '定时器多久跑一次。这一项在插件加载时读一次，改完要重载插件才生效。' },
-          { tier: 'adv', path: ['wakeIdleMinutes'], label: '安静多久才考虑（分钟）', kind: 'int', min: 1, max: 1440, desc: '没人说话才算闲',
-            long: '最近一次互动（别人说的、我说的、插件起来的）到现在超过这么久，才轮到自动叫醒。' },
-          { tier: 'adv', path: ['wakeMinGapMinutes'], label: '两次之间至少隔（分钟）', kind: 'int', min: 1, max: 1440, desc: '醒过没说话也不再连着醒',
-            long: '两次叫醒之间的最小间隔，防止一次没说话就每个 tick 都再来一遍。' },
-          { tier: 'adv', path: ['wakeMaxPerHour'], label: '一小时上限（次）', kind: 'int', min: 1, max: 60, desc: '超了停到下一个整点',
-            long: '一小时最多叫醒几次；到顶就停到下一个整点，自己在设置页排的新预约会解掉这个闸。' },
-          { tier: 'adv', path: ['wakeQuietFrom'], label: '安静开始（点）', kind: 'int', min: 0, max: 24, desc: '只挡自动醒，不挡预约',
-            long: '安静时段起点（0–24 小时制，跨午夜也认）。它自己用 drop_by_at 排的点不受这一项限制。' },
-          { tier: 'adv', path: ['wakeQuietTo'], label: '安静结束（点）', kind: 'int', min: 0, max: 24, desc: '和开始相同=不启用',
-            long: '安静时段终点；和开始填一样就是关掉这段（24 制小时）。' },
-          { tier: 'adv', path: ['wakeAppointmentMinMinutes'], label: '预约最早（分钟）', kind: 'int', min: 1, max: 1440, desc: '小于这个数直接报错',
-            long: 'drop_by_at 的 minutes 下限；超出范围会明确报 5–240 这样的错，不会悄悄夹到边界。' },
-          { tier: 'adv', path: ['wakeAppointmentMaxMinutes'], label: '预约最晚（分钟）', kind: 'int', min: 1, max: 1440, desc: '大于这个数直接报错',
-            long: 'drop_by_at 的 minutes 上限；同一时间只有一个预约，再排一次覆盖上一个。' },
-          { tier: 'adv', path: ['wakePromptHint'], label: '提示词里说「能排点」', kind: 'bool', desc: '不给这句就想不起来排',
-            long: '开：上下文里多一行「你可以用 drop_by_at 排个点」 · 关：工具还在，但模型不一定想得起来。' },
-        ],
-      },
-
       // ───────────── 危险与诊断（默认折叠） ─────────────
       {
         zone: 'diag',
