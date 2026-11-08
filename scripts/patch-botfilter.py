@@ -26,7 +26,9 @@ NEW = ('if(!o||!a||!["c2c","group"].includes(t?.kind)'
        '||this.#r.hasSeen(o)||this.#Q.has(o))return Promise.resolve();'
        'if(t.senderIsBot===!0&&!Dg(t))return Promise.resolve();')
 
-MARKER = 'if(t.senderIsBot===!0&&!Dg(t))return Promise.resolve();'
+# 2026-11-08：标记改成实际落盘的那句（唤醒判定函数叫 Lg，不叫 Dg）
+# 2026-11-08：只认片段，别猜后半句（源码里那句后面接的不是 return）
+MARKER = 'senderIsBot===!0&&!Lg(t)'
 
 
 def main() -> int:

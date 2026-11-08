@@ -14,8 +14,10 @@ PKG = Path("/home/link/.dsh/profiles/web/node_modules/@xmanrui/dsh-im")
 TARGET = PKG / "lib/index.js"
 BACKUP_DIR = Path("/home/link/.dsh/im/backup")
 
+# 2026-11-08：落盘写法已含「宝宝」，补丁认两种形态
 OLD = '/\\bmiyu\\b/iu.test'
-NEW = '/(?:\\bmiyu\\b|米鱼|米魚)/iu.test'
+NEW = '/(?:\\bmiyu\\b|米鱼|宝宝)/iu.test'
+ALREADY = '/(?:\\bmiyu\\b|米鱼|宝宝)/iu.test'
 MARKER = '米鱼|米魚'
 
 
@@ -32,6 +34,9 @@ def main() -> int:
 
     n = src.count(OLD)
     if n == 0:
+        if "/(?:\\bmiyu\\b|米鱼|宝宝)/iu.test" in src or "|米鱼|宝宝)" in src:
+            print("SKIP: 已经含中文和宝宝，无需再打")
+            return 0
         print("FAIL: 找不到 /\\bmiyu\\b/iu 判定，先跑 patch-wakeword.py")
         return 1
 
