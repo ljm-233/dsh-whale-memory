@@ -425,8 +425,11 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
     outs.push(capRec.card({ session: { id: 's-cap' } }))
   }
   check('前两次照常注入', outs[0].includes('第1篇') && outs[1].includes('第2篇'), outs.slice(0, 2).map((s) => s.slice(0, 40)).join(' | '))
-  check('第三次被日上限拦下（沿用旧卡）', !outs[2].includes('第3篇') && outs[2] === outs[1], outs[2].slice(0, 60))
-  check('四五次同样跳过', !outs[3].includes('第4篇') && !outs[4].includes('第5篇'))
+  // 2026-11-09 改：撞顶后**不再沿用旧卡**——沿用会把「读文件」和「检索」一起冻住，
+  // 撞顶之后的每一轮都在读同一张旧卡（今天整天变钝就是这么来的）。
+  // 现在撞顶只表示「不记额度」，交出去的永远是刚组装的那一份。
+  check('第三次起不记额度，但仍是新组装（能看到第3篇）', outs[2].includes('第3篇'), outs[2].slice(0, 60))
+  check('四五次同样是新卡', outs[3].includes('第4篇') && outs[4].includes('第5篇'))
   const capState = readMeta(capDb)
   check('meta 里今天只记了 2 次', capState.count === 2, JSON.stringify(capState).slice(0, 120))
   check('跳过原因写的是 daily-cap', capState.lastSkip?.reason === 'daily-cap' && capState.lastSkip.max === 2, JSON.stringify(capState.lastSkip))
@@ -439,7 +442,10 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
   await lowRec.associate('s-low-conf', ASK)
   const lowCard = lowRec.card({ session: { id: 's-low-conf' } })
   const lowState = readMeta(lowDb)
-  check('低置信不注入', !lowCard.includes('和这次有关') && lowCard === '', JSON.stringify(lowCard.slice(0, 80)))
+  // 2026-11-09 同改：低置信只表示「不记额度、不做新检索」，卡片本身照旧是新组装的那份
+  // （文件段必须是最新的——这就是撞顶不再沿用旧卡的意义）。联想段随新卡进来，
+  // 它本来也标着「不一定用得上」。
+  check('低置信：仍然交出卡片（文件段最新）', typeof lowCard === 'string' && lowCard.length > 0, String(lowCard.length))
   check('跳过原因写的是 confidence', lowState.lastSkip?.reason === 'confidence', JSON.stringify(lowState.lastSkip))
   check('判定依据：conf 低于门槛 0.35',
     Number(lowState.lastSkip?.conf) < 0.35 && Number(lowState.lastSkip?.conf) > 0 && lowState.lastSkip?.threshold === 0.35,
