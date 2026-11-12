@@ -393,7 +393,10 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
   const gid = Number(gdb.prepare('SELECT last_insert_rowid() AS id').get().id)
   const hitsOf = () => Number(gdb.prepare('SELECT hits FROM entries WHERE id = ?').get(gid).hits)
 
-  const rec = createRecall(depsOf(gdb, { scoreMode: () => 'legacy' }))
+  // 2026-11-09：这一组测的是「指纹闸」，不是「时间闸」。
+  // 生产上默认 5 分钟内不重复计额度（见 CARD_MIN_GAP_MS），这里显式关掉，
+  // 不然连跑几次会全被 too-soon 拦住，测不到指纹那条逻辑。
+  const rec = createRecall(depsOf(gdb, { scoreMode: () => 'legacy', cardMinGapMs: () => 0 }))
   await rec.associate('s-gate', ASK)
   const first = rec.card({ session: { id: 's-gate' } })
   check('第一次真注入', first.includes('和这次有关'), first.slice(0, 80))
@@ -417,7 +420,8 @@ check('没有 agent 也能出卡', typeof noAgent === 'string' && noAgent.includ
   const capDb = freshDb()
   capDb.prepare('INSERT INTO entries (u,a,t,w,emo,vec,hot,tier) VALUES (?,?,?,?,?,?,0,0)')
     .run('插件重启之后注入点还有问题吗，上下文那条路还通不通', '嗯，通了', Date.now(), 1, '[]', null)
-  const capRec = createRecall(depsOf(capDb, { cardDailyMax: () => 2, scoreMode: () => 'legacy' }))
+  // 同理：这组测日上限，时间闸要关掉，否则先被 too-soon 拦住。
+  const capRec = createRecall(depsOf(capDb, { cardDailyMax: () => 2, scoreMode: () => 'legacy', cardMinGapMs: () => 0 }))
   await capRec.associate('s-cap', ASK)
   const outs = []
   for (let i = 1; i <= 5; i += 1) {

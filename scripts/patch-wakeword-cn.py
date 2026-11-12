@@ -18,7 +18,9 @@ BACKUP_DIR = Path("/home/link/.dsh/im/backup")
 OLD = '/\\bmiyu\\b/iu.test'
 NEW = '/(?:\\bmiyu\\b|米鱼|宝宝)/iu.test'
 ALREADY = '/(?:\\bmiyu\\b|米鱼|宝宝)/iu.test'
-MARKER = '米鱼|米魚'
+# 2026-11-09：原来这里写的是字面串「米鱼|米魚」，可实际源码里只有「米鱼」，
+# 永远匹配不上，于是每次自愈都误报 FAIL。改成判断「米鱼」在不在。
+MARKER = "米鱼"
 
 
 def main() -> int:
